@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+output/
+social_listening.db
+social_listening.db-shm
+social_listening.db-wal
+node_modules/
+.output/
+.vinxi/
+dist/

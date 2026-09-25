@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X Trending Dashboard - test</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+      :root {
+        --bg: #10131a;
+        --panel: #171b24;
+        --border: #262c38;
+        --border-soft: #1e2330;
+        --text: #eceef3;
+        --text-secondary: #9096a6;
+        --text-muted: #5b6172;
+        --accent-cool: #5ec8d8;
+        --accent-heat: #f2984b;
+        --accent-heat-dim: #6b4a30;
+        --radius: 3px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          "Inter",
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        margin: 0;
+        padding: 28px 32px 48px;
+        -webkit-font-smoothing: antialiased;
+      }
+      h1 {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 21px;
+        letter-spacing: -0.01em;
+        margin: 0 0 4px;
+      }
+      .sub {
+        color: var(--text-muted);
+        font-size: 13px;
+        margin-bottom: 24px;
+      }
+      .sub code {
+        color: var(--text-secondary);
+        font-family: "Space Grotesk", monospace;
+        font-size: 12px;
+      }
+
+      #err {
+        display: none;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent-heat);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        font-size: 13px;
+        margin-bottom: 20px;
+      }
+      #err code {
+        color: var(--accent-heat);
+      }
+
+      .ticker {
+        display: flex;
+        flex-wrap: wrap;
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 24px;
+      }
+      .ticker-item {
+        padding: 14px 28px 14px 0;
+        margin-right: 28px;
+        border-right: 1px solid var(--border-soft);
+      }
+      .ticker-item:last-child {
+        border-right: none;
+      }
+      .ticker-item .num {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 26px;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+      }
+      .ticker-item .label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-top: 3px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 20px;
+        align-items: start;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 18px 20px 20px;
+        margin-bottom: 20px;
+      }
+      .card h2 {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 14px;
+        color: var(--text);
+        margin: 0 0 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px 6px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      th {
+        color: var(--text-muted);
+        font-weight: 500;
+        font-size: 12px;
+      }
+      tbody tr {
+        transition: background 120ms ease;
+      }
+      tbody tr:hover {
+        background: rgba(94, 200, 216, 0.06);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      td.num,
+      th.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .run-dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+      .post-text {
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--text-secondary);
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 20px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .ticker {
+          flex-direction: column;
+        }
+        .ticker-item {
+          border-right: none;
+          border-bottom: 1px solid var(--border-soft);
+          margin-right: 0;
+          padding: 10px 0;
+        }
+        .ticker-item:last-child {
+          border-bottom: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>X trending dashboard (test)</h1>
+    <div class="sub">
+      Baca dari <code>data.json</code> hasil <code>apify_pull.py</code>. Belum
+      konek DB, murni file lokal.
+    </div>
+    <div id="err">
+      Gagal load data.json. Jalankan lewat local server (misal
+      <code>python -m http.server</code>), bukan buka file langsung. Pastikan
+      data.json ada 1 folder sama file ini.
+    </div>
+
+    <div class="ticker">
+      <div class="ticker-item">
+        <div class="num" id="statTotal">-</div>
+        <div class="label">Total post ditarik</div>
+      </div>
+      <div class="ticker-item">
+        <div class="num" id="statHashtags">-</div>
+        <div class="label">Hashtag unik</div>
+      </div>
+      <div class="ticker-item">
+        <div class="num" id="statGenerated">-</div>
+        <div class="label">Terakhir ditarik</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h2>Top hashtag / topic</h2>
+          <canvas id="hashtagChart" height="230"></canvas>
+        </div>
+        <div class="card">
+          <h2>Post teratas (like tertinggi)</h2>
+          <table id="postsTable">
+            <thead>
+              <tr>
+                <th>author</th>
+                <th>text</th>
+                <th class="num">like</th>
+                <th class="num">retweet</th>
+                <th>sumber</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h2>Post per run</h2>
+          <table id="runTable">
+            <thead>
+              <tr>
+                <th>run</th>
+                <th class="num">jumlah</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const RUN_COLORS = {
+        keyword_tracking: "#5ec8d8",
+        trending_discovery: "#f2984b",
+      };
+      function runColor(name) {
+        return RUN_COLORS[name] || "#5b6172";
+      }
+
+      async function loadData() {
+        try {
+          const res = await fetch("./data.json");
+          if (!res.ok) throw new Error("not ok");
+          const data = await res.json();
+          render(data);
+        } catch (e) {
+          document.getElementById("err").style.display = "block";
+        }
+      }
+
+      function render(data) {
+        document.getElementById("statTotal").textContent =
+          data.total_posts ?? 0;
+        document.getElementById("statHashtags").textContent = Object.keys(
+          data.hashtag_counts || {},
+        ).length;
+        document.getElementById("statGenerated").textContent = data.generated_at
+          ? new Date(data.generated_at).toLocaleString("id-ID")
+          : "-";
+
+        const hashtags = Object.entries(data.hashtag_counts || {}).slice(0, 15);
+        const maxCount = Math.max(...hashtags.map((h) => h[1]), 1);
+        const heatColors = hashtags.map((h) => {
+          const t = h[1] / maxCount;
+          const lightness = 38 + t * 20;
+          return `hsl(28, 85%, ${lightness}%)`;
+        });
+
+        new Chart(document.getElementById("hashtagChart"), {
+          type: "bar",
+          data: {
+            labels: hashtags.map((h) => "#" + h[0]),
+            datasets: [
+              {
+                label: "mention",
+                data: hashtags.map((h) => h[1]),
+                backgroundColor: heatColors,
+                borderRadius: 2,
+                barThickness: 14,
+              },
+            ],
+          },
+          options: {
+            indexAxis: "y",
+            plugins: { legend: { display: false } },
+            scales: {
+              x: {
+                beginAtZero: true,
+                grid: { color: "#1e2330" },
+                ticks: {
+                  color: "#9096a6",
+                  font: { family: "Inter", size: 11 },
+                },
+              },
+              y: {
+                grid: { display: false },
+                ticks: {
+                  color: "#eceef3",
+                  font: { family: "Inter", size: 12 },
+                },
+              },
+            },
+          },
+        });
+
+        const runBody = document.querySelector("#runTable tbody");
+        Object.entries(data.run_counts || {}).forEach(([run, count]) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td><span class="run-dot" style="background:${runColor(run)}"></span>${run}</td><td class="num">${count}</td>`;
+          runBody.appendChild(tr);
+        });
+
+        const postsBody = document.querySelector("#postsTable tbody");
+        (data.posts || []).slice(0, 20).forEach((p) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+      <td>@${p.author || "-"}</td>
+      <td class="post-text" title="${(p.text || "").replace(/"/g, "&quot;")}">${p.text || ""}</td>
+      <td class="num">${p.like_count ?? 0}</td>
+      <td class="num">${p.retweet_count ?? 0}</td>
+      <td><span class="run-dot" style="background:${runColor(p.source_run)}"></span>${p.source_run || "-"}</td>
+    `;
+          postsBody.appendChild(tr);
+        });
+      }
+
+      loadData();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1 @@
+# Tidak ada dependency eksternal; script hanya memakai Python standard library.
