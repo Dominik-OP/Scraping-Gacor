@@ -125,7 +125,7 @@ async function backend<T>(path: string, init?: RequestInit): Promise<T> {
       },
     })
   } catch {
-    throw new Error('Backend Python tidak dapat dihubungi. Jalankan python app.py terlebih dahulu.')
+    throw new Error('Unable to connect to the service. Try again shortly.')
   }
 
   const contentType = response.headers.get('content-type') ?? ''
@@ -136,7 +136,7 @@ async function backend<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const message = typeof payload === 'object' && payload && 'error' in payload
       ? String(payload.error)
-      : `Permintaan backend gagal (${response.status}).`
+      : `The request failed (${response.status}). Try again.`
     throw new Error(message)
   }
   return payload as T
@@ -159,7 +159,7 @@ export const getBootstrap = createServerFn({ method: 'GET' }).handler(async (): 
         gemini_model: '',
       },
       topics: [],
-      error: error instanceof Error ? error.message : 'Dashboard tidak dapat dimuat.',
+      error: error instanceof Error ? error.message : 'Unable to load the dashboard. Try again.',
     }
   }
 })

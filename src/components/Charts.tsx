@@ -10,23 +10,23 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { formatNumber } from '../lib/format'
+import { formatCount, formatNumber } from '../lib/format'
 
 type TimelinePoint = { day: string; count: number }
 type Sentiment = { positive: number; neutral: number; negative: number }
 
 function shortDate(value: string) {
-  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' })
+  return new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short' })
     .format(new Date(`${value}T00:00:00`))
 }
 
 export function VolumeChart({ data }: { data: TimelinePoint[] }) {
   if (!data.length) {
-    return <div className="chart-empty">Belum cukup data untuk membuat grafik.</div>
+    return <div className="chart-empty">No posts to display.</div>
   }
 
   return (
-    <div className="chart-canvas" aria-label="Grafik volume percakapan per hari">
+    <div className="chart-canvas" aria-label="Daily post volume">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 18, right: 12, bottom: 2, left: -22 }}>
           <defs>
@@ -55,7 +55,7 @@ export function VolumeChart({ data }: { data: TimelinePoint[] }) {
             content={({ active, payload, label }) => active && payload?.length ? (
               <div className="chart-tooltip">
                 <span>{shortDate(String(label))}</span>
-                <strong>{formatNumber(Number(payload[0].value))} tweet</strong>
+                <strong>{formatCount(Number(payload[0].value), 'post')}</strong>
               </div>
             ) : null}
           />
@@ -76,9 +76,9 @@ export function VolumeChart({ data }: { data: TimelinePoint[] }) {
 export function SentimentChart({ values }: { values: Sentiment }) {
   const total = values.positive + values.neutral + values.negative
   const data = [
-    { key: 'positive', label: 'Positif', value: values.positive, color: 'var(--positive)' },
-    { key: 'neutral', label: 'Netral', value: values.neutral, color: 'var(--neutral)' },
-    { key: 'negative', label: 'Negatif', value: values.negative, color: 'var(--negative)' },
+    { key: 'positive', label: 'Positive', value: values.positive, color: 'var(--positive)' },
+    { key: 'neutral', label: 'Neutral', value: values.neutral, color: 'var(--neutral)' },
+    { key: 'negative', label: 'Negative', value: values.negative, color: 'var(--negative)' },
   ]
 
   return (
@@ -100,7 +100,7 @@ export function SentimentChart({ values }: { values: Sentiment }) {
             </Pie>
           </PieChart>
         </ResponsiveContainer>
-        <div className="donut-label"><strong>{formatNumber(total)}</strong><span>tweet</span></div>
+        <div className="donut-label"><strong>{formatNumber(total)}</strong><span>{total === 1 ? 'post' : 'posts'}</span></div>
       </div>
       <div className="sentiment-list">
         {data.map((item) => {

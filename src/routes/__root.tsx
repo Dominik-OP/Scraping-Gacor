@@ -18,9 +18,9 @@ export const Route = createRootRoute({
       { name: 'theme-color', content: '#09111f' },
       {
         name: 'description',
-        content: 'Dashboard social listening X dengan koleksi data melalui Apify.',
+        content: 'Monitor conversations on X, track engagement, and analyze topics with AI summaries.',
       },
-      { title: 'IndonesiaBerkumpul | Doksli' },
+      { title: 'IndonesiaBerkumpul | Social Listening' },
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
@@ -41,7 +41,7 @@ function RootComponent() {
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="id" data-theme="dark">
+    <html lang="en" data-theme="dark">
       <head>
         <HeadContent />
       </head>
@@ -57,9 +57,9 @@ function NotFoundPage() {
   return (
     <main className="not-found-page">
       <div className="brand-mark">IB</div>
-      <h1>Halaman tidak ditemukan</h1>
-      <p>Alamat yang Anda buka tidak tersedia pada dashboard IndonesiaBerkumpul.</p>
-      <a className="primary-button" href="/">Kembali ke dashboard</a>
+      <h1>Page Not Found</h1>
+      <p>This page is not available.</p>
+      <a className="primary-button" href="/">Back to Dashboard</a>
     </main>
   )
 }

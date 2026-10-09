@@ -1,1 +1,2 @@
-# Tidak ada dependency eksternal; script hanya memakai Python standard library.
+# PostgreSQL driver for hosted deployments; local SQLite needs no driver.
+psycopg[binary]>=3.2,<4

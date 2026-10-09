@@ -26,7 +26,7 @@ import {
 import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { SentimentChart } from './Charts'
-import { formatDate, formatNumber, initials, runLabels, sentimentLabels } from '../lib/format'
+import { formatCount, formatDate, formatNumber, initials, runLabels, sentimentLabels } from '../lib/format'
 import {
   analyzeTopic,
   archiveTopic,
@@ -137,7 +137,7 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       }
     } catch (error) {
       setDashboard(null)
-      setPageError(error instanceof Error ? error.message : 'Data dashboard gagal dimuat.')
+      setPageError(error instanceof Error ? error.message : 'Unable to load the dashboard. Try again.')
     } finally {
       setLoading(false)
     }
@@ -181,13 +181,13 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
         await refreshTopics(run.topic_id)
         await loadDashboard(run.topic_id)
         if (run.status === 'succeeded') {
-          showNotice(`${formatNumber(run.items_new)} tweet baru ditambahkan.`)
+          showNotice(`${formatCount(run.items_new, 'post')} added.`)
         } else {
-          showNotice(run.error || 'Pengambilan data gagal.', true)
+          showNotice(run.error || 'Post collection failed. Try again.', true)
         }
       } catch (error) {
         if (!cancelled) {
-          showNotice(error instanceof Error ? error.message : 'Status proses gagal diperiksa.', true)
+          showNotice(error instanceof Error ? error.message : 'Unable to check collection status. Try again.', true)
           timer = setTimeout(poll, 3000)
         }
       }
@@ -216,14 +216,14 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
         }
         setActiveAIId(null)
         if (next.ai_analysis?.status === 'succeeded') {
-          showNotice('Analisis Gemini selesai.')
+          showNotice('AI analysis completed.')
         } else {
-          showNotice(next.ai_analysis?.error || 'Analisis Gemini gagal.', true)
+          showNotice(next.ai_analysis?.error || 'AI analysis failed. Try again.', true)
         }
       } catch (error) {
         if (!cancelled) {
           setActiveAIId(null)
-          showNotice(error instanceof Error ? error.message : 'Status Gemini gagal diperiksa.', true)
+          showNotice(error instanceof Error ? error.message : 'Unable to check analysis status. Try again.', true)
         }
       }
     }
@@ -238,20 +238,20 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
   const metrics = useMemo(() => {
     const summary = dashboard?.summary
     return [
-      { label: 'Total percakapan', value: summary?.mentions ?? 0, note: 'Tweet tersimpan' },
-      { label: 'Total interaksi', value: summary?.engagement ?? 0, note: 'Like, repost, balasan, kutipan' },
-      { label: 'Akun unik', value: summary?.authors ?? 0, note: 'Sumber percakapan' },
-      { label: 'Total audiens akun', value: summary?.audience ?? 0, note: 'Jumlah pengikut akun unik' },
+      { label: 'Total Posts', value: summary?.mentions ?? 0, note: 'Collected posts' },
+      { label: 'Total Engagement', value: summary?.engagement ?? 0, note: 'Likes, reposts, replies, and quotes' },
+      { label: 'Unique Authors', value: summary?.authors ?? 0, note: 'Accounts contributing posts' },
+      { label: 'Combined Followers', value: summary?.audience ?? 0, note: 'Total followers across unique authors' },
     ]
   }, [dashboard])
 
   const topConversations = useMemo(() => {
     const top = dashboard?.top_posts
     return [
-      { label: 'Paling disukai', note: 'Like tertinggi', post: top?.most_liked ?? null, Icon: Heart, value: top?.most_liked?.like_count ?? 0 },
-      { label: 'Paling direpost', note: 'Jangkauan organik', post: top?.most_reposted ?? null, Icon: Repeat, value: top?.most_reposted?.retweet_count ?? 0 },
-      { label: 'Diskusi terhangat', note: 'Balasan + kutipan', post: top?.most_discussed ?? null, Icon: ChatCircle, value: (top?.most_discussed?.reply_count ?? 0) + (top?.most_discussed?.quote_count ?? 0) },
-      { label: 'Paling populer', note: 'Total interaksi', post: top?.most_popular ?? null, Icon: Broadcast, value: top?.most_popular ? top.most_popular.like_count + top.most_popular.retweet_count + top.most_popular.reply_count + top.most_popular.quote_count : 0 },
+      { label: 'Most Liked', note: 'Highest number of likes', post: top?.most_liked ?? null, Icon: Heart, value: top?.most_liked?.like_count ?? 0 },
+      { label: 'Most Reposted', note: 'Highest number of reposts', post: top?.most_reposted ?? null, Icon: Repeat, value: top?.most_reposted?.retweet_count ?? 0 },
+      { label: 'Most Discussed', note: 'Replies and quotes', post: top?.most_discussed ?? null, Icon: ChatCircle, value: (top?.most_discussed?.reply_count ?? 0) + (top?.most_discussed?.quote_count ?? 0) },
+      { label: 'Highest Engagement', note: 'Total Engagement', post: top?.most_popular ?? null, Icon: Broadcast, value: top?.most_popular ? top.most_popular.like_count + top.most_popular.retweet_count + top.most_popular.reply_count + top.most_popular.quote_count : 0 },
     ]
   }, [dashboard])
 
@@ -281,9 +281,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       setSelectedId(topic.id)
       setTopicModal(false)
       form.reset()
-      showNotice('Topik dibuat. Ambil data saat Anda siap.')
+      showNotice('Topic created. Collect posts when you are ready.')
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Topik gagal dibuat.')
+      setFormError(error instanceof Error ? error.message : 'Unable to create the topic. Try again.')
     } finally {
       setSubmitting(false)
     }
@@ -296,9 +296,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       const result = await collectTopic({ data: selectedTopic.id })
       setActiveRunId(result.run_id)
       setCollectModal(false)
-      showNotice('Pengambilan data dimulai.')
+      showNotice('Post collection started.')
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'Pengambilan data gagal dimulai.', true)
+      showNotice(error instanceof Error ? error.message : 'Unable to start post collection. Try again.', true)
     } finally {
       setSubmitting(false)
     }
@@ -312,22 +312,22 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${selectedTopic.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'topik'}.csv`
+      anchor.download = `${selectedTopic.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'topic'}.csv`
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'CSV gagal dibuat.', true)
+      showNotice(error instanceof Error ? error.message : 'Unable to export the CSV. Try again.', true)
     }
   }
 
   function openAIAnalysis() {
     if (!selectedTopic) return
     if (!initial.config.gemini_configured) {
-      showNotice('Isi API_GEMINI_TOKEN di file .env terlebih dahulu.', true)
+      showNotice('AI analysis is not configured. Contact your administrator.', true)
       return
     }
     if (!dashboard?.summary.mentions) {
-      showNotice('Belum ada percakapan untuk dianalisis.', true)
+      showNotice('Collect posts before starting an analysis.', true)
       return
     }
     setAiModal(true)
@@ -341,9 +341,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       setAiModal(false)
       setActiveAIId(selectedTopic.id)
       await loadDashboard(selectedTopic.id)
-      showNotice('Gemini mulai menganalisis percakapan.')
+      showNotice('AI analysis started.')
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'Analisis Gemini gagal dimulai.', true)
+      showNotice(error instanceof Error ? error.message : 'Unable to start AI analysis. Try again.', true)
     } finally {
       setSubmitting(false)
     }
@@ -356,9 +356,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       await archiveTopic({ data: archiveTarget.id })
       setArchiveTarget(null)
       await refreshTopics()
-      showNotice('Topik dipindahkan ke Arsip.')
+      showNotice('Topic archived.')
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'Topik gagal diarsipkan.', true)
+      showNotice(error instanceof Error ? error.message : 'Unable to archive the topic. Try again.', true)
     } finally {
       setSubmitting(false)
     }
@@ -370,9 +370,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       await restoreTopic({ data: topic.id })
       await refreshTopics(topic.id)
       setArchiveOpen(false)
-      showNotice('Topik dipulihkan ke daftar pantauan.')
+      showNotice('Topic restored.')
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'Topik gagal dipulihkan.', true)
+      showNotice(error instanceof Error ? error.message : 'Unable to restore the topic. Try again.', true)
     } finally {
       setSubmitting(false)
     }
@@ -385,9 +385,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       await deleteTopicPermanently({ data: permanentDeleteTarget.id })
       setPermanentDeleteTarget(null)
       await refreshTopics()
-      showNotice('Topik dan seluruh datanya dihapus permanen.')
+      showNotice('Topic and associated records permanently deleted.')
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'Topik gagal dihapus permanen.', true)
+      showNotice(error instanceof Error ? error.message : 'Unable to delete the topic. Try again.', true)
     } finally {
       setSubmitting(false)
     }
@@ -395,12 +395,8 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
 
   function openCollection() {
     if (!selectedTopic) return
-    if (selectedTopic.is_demo) {
-      setTopicModal(true)
-      return
-    }
     if (!initial.config.token_configured) {
-      showNotice('Isi APIFY_API_TOKEN di file .env terlebih dahulu.', true)
+      showNotice('Post collection is not configured. Contact your administrator.', true)
       return
     }
     setCollectModal(true)
@@ -411,16 +407,16 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       <aside className={`sidebar${mobileNav ? ' sidebar-open' : ''}`}>
         <div className="brand-block">
           <div className="brand-mark">IB</div>
-          <div><strong>IndonesiaBerkumpul</strong><span>Doksli Indonesia.</span></div>
-          <button className="icon-button mobile-close" type="button" onClick={() => setMobileNav(false)} aria-label="Tutup navigasi"><X /></button>
+          <div><strong>IndonesiaBerkumpul</strong><span>Social Listening</span></div>
+          <button className="icon-button mobile-close" type="button" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X /></button>
         </div>
 
         <div className="sidebar-heading">
-          <span>Topik Mantep</span>
-          <button className="icon-button" type="button" onClick={() => setTopicModal(true)} aria-label="Tambah topik"><Plus /></button>
+          <span>Topics</span>
+          <button className="icon-button" type="button" onClick={() => setTopicModal(true)} aria-label="Add topic"><Plus /></button>
         </div>
 
-        <nav className="topic-list" aria-label="Daftar topik">
+        <nav className="topic-list" aria-label="Topics">
           {topics.length ? topics.map((topic) => (
             <div className={`topic-row${topic.id === selectedId ? ' active' : ''}`} key={topic.id}>
               <button
@@ -428,61 +424,61 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
                 className="topic-button"
                 onClick={() => { setSelectedId(topic.id); setMobileNav(false) }}
               >
-                <span><strong>{topic.name}</strong><small>{topic.is_demo ? 'Data contoh' : `${topic.lookback_days} hari terakhir`}</small></span>
+                <span><strong>{topic.name}</strong><small>{`Last ${topic.lookback_days} ${topic.lookback_days === 1 ? 'day' : 'days'}`}</small></span>
                 <b>{formatNumber(topic.post_count)}</b>
               </button>
-              <button className="topic-archive-button" type="button" onClick={() => setArchiveTarget(topic)} aria-label={`Arsipkan topik ${topic.name}`} title="Arsipkan topik"><Archive /></button>
+              <button className="topic-archive-button" type="button" onClick={() => setArchiveTarget(topic)} aria-label={`Archive topic ${topic.name}`} title="Archive Topic"><Archive /></button>
             </div>
-          )) : <p className="sidebar-empty">Belum ada Topik Mantep.</p>}
+          )) : <p className="sidebar-empty">No topics yet.</p>}
         </nav>
 
         <section className={`archive-section${archiveOpen ? ' open' : ''}`}>
           <button className="archive-toggle" type="button" onClick={() => setArchiveOpen((value) => !value)} aria-expanded={archiveOpen}>
-            <span><Archive />Arsip</span><b>{formatNumber(archivedTopics.length)}</b>
+            <span><Archive />Archive</span><b>{formatNumber(archivedTopics.length)}</b>
           </button>
           {archiveOpen && (
             <div className="archive-list">
               {archivedTopics.length ? archivedTopics.map((topic) => (
                 <div className="archive-row" key={topic.id}>
-                  <div><strong>{topic.name}</strong><small>{formatNumber(topic.post_count)} percakapan</small></div>
-                  <button type="button" onClick={() => void handleRestoreTopic(topic)} disabled={submitting} aria-label={`Pulihkan topik ${topic.name}`} title="Pulihkan"><ArrowCounterClockwise /></button>
-                  <button className="archive-delete" type="button" onClick={() => setPermanentDeleteTarget(topic)} disabled={submitting} aria-label={`Hapus permanen topik ${topic.name}`} title="Hapus permanen"><Trash /></button>
+                  <div><strong>{topic.name}</strong><small>{formatCount(topic.post_count, 'post')}</small></div>
+                  <button type="button" onClick={() => void handleRestoreTopic(topic)} disabled={submitting} aria-label={`Restore topic ${topic.name}`} title="Restore"><ArrowCounterClockwise /></button>
+                  <button className="archive-delete" type="button" onClick={() => setPermanentDeleteTarget(topic)} disabled={submitting} aria-label={`Permanently delete topic ${topic.name}`} title="Delete Permanently"><Trash /></button>
                 </div>
-              )) : <p>Belum ada topik yang diarsipkan.</p>}
+              )) : <p>No archived topics.</p>}
             </div>
           )}
         </section>
 
         <div className="connection-panel">
           <span className={`connection-state${initial.config.token_configured ? '' : ' unavailable'}`}>
-            <i />{initial.config.token_configured ? 'Apify Udah Nyambung' : 'Mode demo'}
+            <i />{initial.config.token_configured ? 'Apify Connected' : 'Collection Unavailable'}
           </span>
-          <small>{initial.config.token_configured ? 'Token udah nyambung' : 'Token belum dikonfigurasi'}</small>
+          <small>{initial.config.token_configured ? 'Ready to collect posts' : 'Collection is not configured'}</small>
           <span className={`connection-state ai${initial.config.gemini_configured ? '' : ' unavailable'}`}>
-            <i />{initial.config.gemini_configured ? 'Gemini Udah Nyambung' : 'Gemini belum siap'}
+            <i />{initial.config.gemini_configured ? 'AI Analysis Ready' : 'AI Analysis Unavailable'}
           </span>
-          <small>{initial.config.gemini_configured ? initial.config.gemini_model : 'API key belum dikonfigurasi'}</small>
+          <small>{initial.config.gemini_configured ? initial.config.gemini_model : 'AI analysis is not configured'}</small>
         </div>
       </aside>
 
-      {mobileNav && <button className="sidebar-scrim" type="button" aria-label="Tutup navigasi" onClick={() => setMobileNav(false)} />}
+      {mobileNav && <button className="sidebar-scrim" type="button" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
 
       <main className="workspace">
         <header className="topbar">
-          <button className="icon-button menu-button" type="button" onClick={() => setMobileNav(true)} aria-label="Buka navigasi"><List /></button>
+          <button className="icon-button menu-button" type="button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><List /></button>
           <div className="page-identity">
-            <span>Doksli Indonesia</span>
-            <h1>{selectedTopic?.name ?? 'Ringkasan percakapan'}</h1>
-            <p>{selectedTopic?.query ?? 'Buat topik untuk mulai memantau percakapan di X.'}</p>
+            <span>Social Listening</span>
+            <h1>{selectedTopic?.name ?? 'Conversation Overview'}</h1>
+            <p>{selectedTopic?.query ?? 'Create a topic to monitor conversations on X.'}</p>
           </div>
           <div className="topbar-actions">
-            <button className="icon-button" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Ganti tema">
+            <button className="icon-button" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Switch theme">
               {theme === 'dark' ? <Sun /> : <Moon />}
             </button>
             {selectedTopic && <>
-              <button className="secondary-button" type="button" onClick={handleExport}><DownloadSimple />Ekspor CSV</button>
-              <button className="secondary-button ai-button" type="button" onClick={openAIAnalysis} disabled={activeAIId === selectedTopic.id}><MagicWand />{activeAIId === selectedTopic.id ? 'Gemini bekerja' : 'Analisis AI'}</button>
-              <button className="primary-button" type="button" onClick={openCollection} disabled={Boolean(activeRunId)}><ArrowsClockwise />{activeRunId ? 'Sedang berjalan' : selectedTopic.is_demo ? 'Buat topik nyata' : 'Ambil data'}</button>
+              <button className="secondary-button" type="button" onClick={handleExport}><DownloadSimple />Export CSV</button>
+              <button className="secondary-button ai-button" type="button" onClick={openAIAnalysis} disabled={activeAIId === selectedTopic.id}><MagicWand />{activeAIId === selectedTopic.id ? 'Analyzing…' : 'AI Analysis'}</button>
+              <button className="primary-button" type="button" onClick={openCollection} disabled={Boolean(activeRunId)}><ArrowsClockwise />{activeRunId ? 'Collecting…' : 'Collect Posts'}</button>
             </>}
           </div>
         </header>
@@ -490,7 +486,7 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
         {activeRunId && (
           <div className="run-banner" role="status">
             <span className="run-icon"><ArrowsClockwise /></span>
-            <div><strong>Mengambil data dari X</strong><span>Proses berjalan di background. Dashboard diperbarui otomatis.</span></div>
+            <div><strong>Collecting Posts from X</strong><span>Collection is running. The dashboard updates automatically.</span></div>
             <div className="run-track"><span /></div>
           </div>
         )}
@@ -502,19 +498,15 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
         {!selectedTopic ? (
           <section className="empty-page">
             <div className="empty-icon"><Broadcast /></div>
-            <h2>Belum ada Topik Mantep</h2>
-            <p>Buat topik, masukkan query X, lalu mulai pengambilan data melalui Apify.</p>
-            <button className="primary-button" type="button" onClick={() => setTopicModal(true)}><Plus />Buat topik</button>
+            <h2>No Topics Yet</h2>
+            <p>Create a topic and add a search query to start collecting posts.</p>
+            <button className="primary-button" type="button" onClick={() => setTopicModal(true)}><Plus />Create Topic</button>
           </section>
         ) : loading && !dashboard ? (
           <DashboardSkeleton />
         ) : dashboard ? (
           <div className="dashboard-content">
-            {selectedTopic.is_demo ? (
-              <div className="inline-alert"><CheckCircle /><span>Data contoh aktif. Buat topik baru untuk mengambil data nyata dari X.</span></div>
-            ) : null}
-
-            <section className="metrics-strip" aria-label="Ringkasan metrik">
+            <section className="metrics-strip" aria-label="Key metrics">
               {metrics.map((metric, index) => {
                 const Icon = metricIcons[index]
                 return (
@@ -530,40 +522,40 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
             <div className="analytics-grid">
               <section className="panel ai-summary-panel">
                 <div className="panel-heading">
-                  <div><h2>Ringkasan Gemini</h2><p>Intisari percakapan berdasarkan data yang terkumpul.</p></div>
-                  <span className={`ai-status ${dashboard.ai_analysis?.status ?? 'idle'}`}><MagicWand />{dashboard.ai_analysis?.status === 'succeeded' ? 'Selesai' : dashboard.ai_analysis?.status === 'failed' ? 'Gagal' : dashboard.ai_analysis?.status === 'queued' || dashboard.ai_analysis?.status === 'running' ? 'Menganalisis' : 'Belum dianalisis'}</span>
+                  <div><h2>AI Summary</h2><p>Key findings from collected posts.</p></div>
+                  <span className={`ai-status ${dashboard.ai_analysis?.status ?? 'idle'}`}><MagicWand />{dashboard.ai_analysis?.status === 'succeeded' ? 'Completed' : dashboard.ai_analysis?.status === 'failed' ? 'Failed' : dashboard.ai_analysis?.status === 'queued' || dashboard.ai_analysis?.status === 'running' ? 'Analyzing…' : 'Not Analyzed'}</span>
                 </div>
                 {dashboard.ai_analysis?.status === 'succeeded' ? (
                   <div className="ai-summary-content">
                     <p className="ai-summary-lead">{dashboard.ai_analysis.summary}</p>
                     <div className="ai-sentiment-insights">
-                      <article className="positive"><span>Sudut positif</span><p>{dashboard.ai_analysis.positive_summary}</p></article>
-                      <article className="negative"><span>Sudut negatif</span><p>{dashboard.ai_analysis.negative_summary}</p></article>
+                      <article className="positive"><span>Positive Themes</span><p>{dashboard.ai_analysis.positive_summary}</p></article>
+                      <article className="negative"><span>Negative Themes</span><p>{dashboard.ai_analysis.negative_summary}</p></article>
                     </div>
-                    <div className="ai-topics"><span>Tema utama</span><div>{dashboard.ai_analysis.key_topics.map((topic) => <b key={topic}>{topic}</b>)}</div></div>
-                    <small>Dianalisis dengan {dashboard.ai_analysis.model} · {formatDate(dashboard.ai_analysis.analyzed_at, true)}</small>
+                    <div className="ai-topics"><span>Key Topics</span><div>{dashboard.ai_analysis.key_topics.map((topic) => <b key={topic}>{topic}</b>)}</div></div>
+                    <small>Analyzed with {dashboard.ai_analysis.model} · {formatDate(dashboard.ai_analysis.analyzed_at, true)}</small>
                   </div>
                 ) : dashboard.ai_analysis?.status === 'queued' || dashboard.ai_analysis?.status === 'running' ? (
-                  <div className="ai-summary-empty working"><MagicWand /><strong>Gemini sedang membaca percakapan</strong><p>Sentimen dan ringkasan akan muncul otomatis setelah proses selesai.</p></div>
+                  <div className="ai-summary-empty working"><MagicWand /><strong>Analysis in Progress</strong><p>The summary will appear when analysis is complete.</p></div>
                 ) : dashboard.ai_analysis?.status === 'failed' ? (
-                  <div className="ai-summary-empty failed"><WarningCircle /><strong>Analisis belum berhasil</strong><p>{dashboard.ai_analysis.error}</p><button className="secondary-button" type="button" onClick={openAIAnalysis}>Coba lagi</button></div>
+                  <div className="ai-summary-empty failed"><WarningCircle /><strong>Analysis Failed</strong><p>{dashboard.ai_analysis.error}</p><button className="secondary-button" type="button" onClick={openAIAnalysis}>Retry Analysis</button></div>
                 ) : (
-                  <div className="ai-summary-empty"><MagicWand /><strong>Ubah percakapan menjadi insight</strong><p>Jalankan Gemini untuk menilai sentimen dan merangkum isu utama.</p><button className="secondary-button" type="button" onClick={openAIAnalysis}>Analisis sekarang</button></div>
+                  <div className="ai-summary-empty"><MagicWand /><strong>No Analysis Yet</strong><p>Analyze collected posts to identify key themes and summarize the conversation.</p><button className="secondary-button" type="button" onClick={openAIAnalysis}>Analyze Posts</button></div>
                 )}
               </section>
               <section className="panel sentiment-panel">
-                <div className="panel-heading"><div><h2>Sentimen Konoha</h2><p>{dashboard.ai_analysis?.status === 'succeeded' ? 'Klasifikasi konteks, negasi, slang, dan sarkasme oleh Gemini.' : 'Distribusi sementara; jalankan Gemini untuk analisis kontekstual.'}</p></div></div>
+                <div className="panel-heading"><div><h2>Sentiment Overview</h2><p>Rule-based sentiment across collected posts.</p></div></div>
                 <SentimentChart values={dashboard.sentiment} />
               </section>
             </div>
 
             <section className="top-conversations-section">
-              <div className="section-heading"><div><h2>Percakapan unggulan</h2><p>Konten dengan respons tertinggi berdasarkan metrik publik X.</p></div></div>
+              <div className="section-heading"><div><h2>Top Posts</h2><p>Posts ranked by public engagement metrics on X.</p></div></div>
               <div className="top-conversation-grid">
                 {topConversations.map(({ label, note, post, Icon, value }) => (
                   <article className="top-conversation-card" key={label}>
                     <header><span><Icon />{label}</span><b>{formatNumber(value)}</b></header>
-                    {post ? <><p>{post.text}</p><footer><span>@{post.author_username}</span><small>{note}</small><a href={post.url} target="_blank" rel="noreferrer" aria-label={`Buka ${label}`}><ArrowSquareOut /></a></footer></> : <div className="compact-empty">Belum ada data.</div>}
+                    {post ? <><p>{post.text}</p><footer><span>@{post.author_username}</span><small>{note}</small><a href={post.url} target="_blank" rel="noreferrer" aria-label={`View ${label} on X`}><ArrowSquareOut /></a></footer></> : <div className="compact-empty">No posts collected.</div>}
                   </article>
                 ))}
               </div>
@@ -571,45 +563,45 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
 
             <div className="insight-grid">
               <section className="panel author-panel">
-                <div className="panel-heading"><div><h2>Akun berdampak</h2><p>Diurutkan berdasarkan total interaksi.</p></div></div>
+                <div className="panel-heading"><div><h2>Top Authors</h2><p>Ranked by total engagement.</p></div></div>
                 <div className="author-list">
                   {dashboard.top_authors.length ? dashboard.top_authors.map((author) => (
                     <div className="author-row" key={author.author_username}>
                       <Avatar name={author.author_name} source={author.author_avatar} />
-                      <div><strong>{author.author_name}</strong><span>@{author.author_username} · {formatNumber(author.followers)} pengikut</span></div>
-                      <b>{formatNumber(author.engagement)}<small>interaksi</small></b>
+                      <div><strong>{author.author_name}</strong><span>@{author.author_username} · {formatCount(author.followers, 'follower')}</span></div>
+                      <b>{formatNumber(author.engagement)}<small>engagement</small></b>
                     </div>
-                  )) : <EmptyCompact text="Belum ada data akun." />}
+                  )) : <EmptyCompact text="No authors to display." />}
                 </div>
               </section>
 
               <section className="panel hashtag-panel">
-                <div className="panel-heading"><div><h2>Hashtag terkait</h2><p>Tema yang muncul bersama query utama.</p></div></div>
+                <div className="panel-heading"><div><h2>Related Hashtags</h2><p>Hashtags found in collected posts.</p></div></div>
                 {dashboard.hashtags.length ? (
                   <div className="hashtag-cloud">{dashboard.hashtags.map((item) => <span key={item.tag}><Hash />{item.tag}<b>{formatNumber(item.count)}</b></span>)}</div>
-                ) : <EmptyCompact text="Belum ada hashtag terkait." />}
+                ) : <EmptyCompact text="No hashtags found." />}
               </section>
 
               <section className="panel quality-panel">
-                <div className="panel-heading"><div><h2>Kualitas koleksi</h2><p>Ringkasan pengambilan data terakhir.</p></div></div>
+                <div className="panel-heading"><div><h2>Latest Collection</h2><p>Status and results of the latest collection.</p></div></div>
                 {dashboard.last_run ? (
                   <dl className="run-facts">
                     <div><dt>Status</dt><dd className={`run-status ${dashboard.last_run.status}`}>{runLabels[dashboard.last_run.status]}</dd></div>
-                    <div><dt>Waktu</dt><dd>{formatDate(dashboard.last_run.finished_at || dashboard.last_run.requested_at, true)}</dd></div>
-                    <div><dt>Diterima</dt><dd>{formatNumber(dashboard.last_run.items_received)} tweet</dd></div>
-                    <div><dt>Data baru</dt><dd>{formatNumber(dashboard.last_run.items_new)} tweet</dd></div>
+                    <div><dt>Updated</dt><dd>{formatDate(dashboard.last_run.finished_at || dashboard.last_run.requested_at, true)}</dd></div>
+                    <div><dt>Received</dt><dd>{formatCount(dashboard.last_run.items_received, 'post')}</dd></div>
+                    <div><dt>New Posts</dt><dd>{formatCount(dashboard.last_run.items_new, 'post')}</dd></div>
                   </dl>
-                ) : <EmptyCompact text="Belum pernah dijalankan." />}
+                ) : <EmptyCompact text="No collection history." />}
               </section>
             </div>
 
             <section className="conversation-panel">
               <div className="conversation-header">
-                <div><h2>Percakapan terbaru</h2><p>Urut berdasarkan waktu publikasi. Buka sumber untuk memeriksa konteks asli.</p></div>
-                <label className="filter-field"><span>Filter sentimen</span><select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value as SentimentFilter)}><option value="all">Semua</option><option value="positive">Positif</option><option value="neutral">Netral</option><option value="negative">Negatif</option></select></label>
+                <div><h2>Recent Posts</h2><p>Sorted by publication date. View each post on X for its original context.</p></div>
+                <label className="filter-field"><span>Sentiment Filter</span><select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value as SentimentFilter)}><option value="all">All</option><option value="positive">Positive</option><option value="neutral">Neutral</option><option value="negative">Negative</option></select></label>
               </div>
               <div className="conversation-list">
-                {filteredPosts.length ? filteredPosts.map((post) => <ConversationRow key={post.tweet_id} post={post} />) : <EmptyCompact text="Belum ada percakapan pada filter ini." />}
+                {filteredPosts.length ? filteredPosts.map((post) => <ConversationRow key={post.tweet_id} post={post} />) : <EmptyCompact text="No posts match this filter." />}
               </div>
             </section>
           </div>
@@ -619,63 +611,63 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       {notice && <div className={`toast${notice.error ? ' toast-error' : ''}`} role="status">{notice.error ? <WarningCircle /> : <CheckCircle />}<span>{notice.message}</span></div>}
 
       {topicModal && (
-        <Modal title="Topik baru" onClose={() => setTopicModal(false)}>
-          <div className="modal-heading"><div><span>Topik baru</span><h2>Apa yang ingin Anda pantau?</h2></div><button className="icon-button" type="button" onClick={() => setTopicModal(false)} aria-label="Tutup"><X /></button></div>
+        <Modal title="New Topic" onClose={() => setTopicModal(false)}>
+          <div className="modal-heading"><div><span>New Topic</span><h2>Create a Topic</h2></div><button className="icon-button" type="button" onClick={() => setTopicModal(false)} aria-label="Close"><X /></button></div>
           <form onSubmit={handleCreateTopic}>
-            <label className="field"><span>Nama topik</span><input name="name" maxLength={60} required placeholder="Contoh: Pemecatan Purbaya" /><small>Nama singkat untuk navigasi dashboard.</small></label>
-            <label className="field"><span>Query pencarian X</span><textarea name="query" maxLength={300} required placeholder={'Contoh: (Purbaya OR "Purbaya Yudhi Sadewa") -filter:retweets'} /><small>Mendukung keyword, frasa, OR, tanda kutip, dan operator pencarian X.</small></label>
+            <label className="field"><span>Topic Name</span><input name="name" maxLength={60} required /><small>Use a short, descriptive name.</small></label>
+            <label className="field"><span>X Search Query</span><textarea name="query" maxLength={300} required /><small>Use keywords, quoted phrases, OR, and supported X search operators.</small></label>
             <div className="form-grid">
-              <label className="field"><span>Bahasa</span><select name="language" defaultValue="id"><option value="id">Indonesia</option><option value="en">Inggris</option><option value="any">Semua bahasa</option></select></label>
-              <label className="field"><span>Rentang waktu</span><select name="lookback_days" defaultValue="1"><option value="1">24 jam</option><option value="7">7 hari</option><option value="14">14 hari</option><option value="30">30 hari</option></select></label>
-              <label className="field"><span>Maksimum tweet</span><input type="number" name="max_items" min={20} max={1000} defaultValue={100} required /></label>
+              <label className="field"><span>Language</span><select name="language" defaultValue="id"><option value="id">Indonesian</option><option value="en">English</option><option value="any">All Languages</option></select></label>
+              <label className="field"><span>Time Range</span><select name="lookback_days" defaultValue="1"><option value="1">24 Hours</option><option value="7">7 Days</option><option value="14">14 Days</option><option value="30">30 Days</option></select></label>
+              <label className="field"><span>Maximum Posts</span><input type="number" name="max_items" min={20} max={1000} defaultValue={100} required /></label>
             </div>
             {formError && <p className="form-error"><WarningCircle />{formError}</p>}
-            <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setTopicModal(false)}>Batal</button><button className="primary-button" type="submit" disabled={submitting}>{submitting ? 'Menyimpan...' : 'Simpan topik'}</button></div>
+            <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setTopicModal(false)}>Cancel</button><button className="primary-button" type="submit" disabled={submitting}>{submitting ? 'Creating…' : 'Create Topic'}</button></div>
           </form>
         </Modal>
       )}
 
       {collectModal && selectedTopic && (
-        <Modal title="Konfirmasi pengambilan data" onClose={() => setCollectModal(false)}>
-          <div className="modal-heading"><div><span>Konfirmasi biaya</span><h2>Mulai pengambilan data?</h2></div><button className="icon-button" type="button" onClick={() => setCollectModal(false)} aria-label="Tutup"><X /></button></div>
+        <Modal title="Confirm Collection" onClose={() => setCollectModal(false)}>
+          <div className="modal-heading"><div><span>Collection Cost</span><h2>Start Post Collection?</h2></div><button className="icon-button" type="button" onClick={() => setCollectModal(false)} aria-label="Close"><X /></button></div>
           <div className="collect-summary">
-            <div><span>Topik</span><strong>{selectedTopic.name}</strong></div>
-            <div><span>Batas hasil</span><strong>{formatNumber(selectedTopic.max_items)} tweet</strong></div>
-            <div><span>Batas biaya</span><strong>US${initial.config.max_charge_usd.toFixed(2)}</strong></div>
+            <div><span>Topic</span><strong>{selectedTopic.name}</strong></div>
+            <div><span>Maximum Posts</span><strong>{formatCount(selectedTopic.max_items, 'post')}</strong></div>
+            <div><span>Maximum Cost</span><strong>US${initial.config.max_charge_usd.toFixed(2)}</strong></div>
           </div>
-          <p className="modal-note">Apify dapat mengenakan biaya sesuai hasil yang diterima. Pengambilan data tidak memanggil Gemini; Gemini hanya memakai kuota ketika Anda menekan tombol Analisis AI.</p>
-          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setCollectModal(false)}>Batal</button><button className="primary-button" type="button" onClick={handleCollect} disabled={submitting}>{submitting ? 'Menjadwalkan...' : 'Mulai pengambilan'}</button></div>
+          <p className="modal-note">Apify may charge for collected posts. AI analysis uses a separate quota and runs only when you request it.</p>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setCollectModal(false)}>Cancel</button><button className="primary-button" type="button" onClick={handleCollect} disabled={submitting}>{submitting ? 'Starting…' : 'Start Collection'}</button></div>
         </Modal>
       )}
 
       {aiModal && selectedTopic && dashboard && (
-        <Modal title="Konfirmasi analisis Gemini" onClose={() => !submitting && setAiModal(false)}>
-          <div className="modal-heading"><div><span>Analisis AI</span><h2>Analisis “{selectedTopic.name}”?</h2></div><button className="icon-button" type="button" onClick={() => setAiModal(false)} aria-label="Tutup" disabled={submitting}><X /></button></div>
+        <Modal title="Confirm AI Analysis" onClose={() => !submitting && setAiModal(false)}>
+          <div className="modal-heading"><div><span>AI Analysis</span><h2>Analyze “{selectedTopic.name}”?</h2></div><button className="icon-button" type="button" onClick={() => setAiModal(false)} aria-label="Close" disabled={submitting}><X /></button></div>
           <div className="collect-summary">
-            <div><span>Percakapan</span><strong>{formatNumber(dashboard.summary.mentions)} tweet</strong></div>
+            <div><span>Posts</span><strong>{formatCount(dashboard.summary.mentions, 'post')}</strong></div>
             <div><span>Model</span><strong>{initial.config.gemini_model}</strong></div>
-            <div><span>Hasil</span><strong>Ringkasan Gemini</strong></div>
+            <div><span>Output</span><strong>AI Summary</strong></div>
           </div>
-          <p className="modal-note">Maksimal 10 tweet teratas dikirim dalam satu permintaan Gemini untuk dibuat ringkasannya. Proses memakai kuota API Gemini hanya saat Anda memulai analisis, dan hasilnya disimpan.</p>
-          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAiModal(false)} disabled={submitting}>Batal</button><button className="primary-button" type="button" onClick={handleAnalyze} disabled={submitting}><MagicWand />{submitting ? 'Menjadwalkan...' : 'Mulai analisis'}</button></div>
+          <p className="modal-note">Up to 10 posts with the highest engagement are sent to Gemini. This uses your AI quota, and the results are saved.</p>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAiModal(false)} disabled={submitting}>Cancel</button><button className="primary-button" type="button" onClick={handleAnalyze} disabled={submitting}><MagicWand />{submitting ? 'Starting…' : 'Start Analysis'}</button></div>
         </Modal>
       )}
 
       {archiveTarget && (
-        <Modal title="Arsipkan topik" onClose={() => !submitting && setArchiveTarget(null)}>
-          <div className="modal-heading"><div><span>Arsip topik</span><h2>Arsipkan “{archiveTarget.name}”?</h2></div><button className="icon-button" type="button" onClick={() => setArchiveTarget(null)} aria-label="Tutup" disabled={submitting}><X /></button></div>
-          <div className="topic-action-preview"><Archive /><div><strong>{archiveTarget.name}</strong><span>{formatNumber(archiveTarget.post_count)} percakapan tersimpan</span></div></div>
-          <p className="modal-note">Topik tidak akan tampil di daftar pantauan, tetapi seluruh data tetap aman dan dapat dipulihkan dari Arsip.</p>
-          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setArchiveTarget(null)} disabled={submitting}>Batal</button><button className="primary-button" type="button" onClick={handleArchiveTopic} disabled={submitting}><Archive />{submitting ? 'Mengarsipkan...' : 'Pindahkan ke Arsip'}</button></div>
+        <Modal title="Archive Topic" onClose={() => !submitting && setArchiveTarget(null)}>
+          <div className="modal-heading"><div><span>Archive Topic</span><h2>Archive “{archiveTarget.name}”?</h2></div><button className="icon-button" type="button" onClick={() => setArchiveTarget(null)} aria-label="Close" disabled={submitting}><X /></button></div>
+          <div className="topic-action-preview"><Archive /><div><strong>{archiveTarget.name}</strong><span>{formatCount(archiveTarget.post_count, 'post')} collected</span></div></div>
+          <p className="modal-note">This topic will move to the archive. Its records will remain available, and you can restore it later.</p>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setArchiveTarget(null)} disabled={submitting}>Cancel</button><button className="primary-button" type="button" onClick={handleArchiveTopic} disabled={submitting}><Archive />{submitting ? 'Archiving…' : 'Archive Topic'}</button></div>
         </Modal>
       )}
 
       {permanentDeleteTarget && (
-        <Modal title="Hapus topik permanen" onClose={() => !submitting && setPermanentDeleteTarget(null)}>
-          <div className="modal-heading"><div><span>Tindakan permanen</span><h2>Hapus “{permanentDeleteTarget.name}”?</h2></div><button className="icon-button" type="button" onClick={() => setPermanentDeleteTarget(null)} aria-label="Tutup" disabled={submitting}><X /></button></div>
-          <div className="topic-action-preview danger"><Trash /><div><strong>{permanentDeleteTarget.name}</strong><span>{formatNumber(permanentDeleteTarget.post_count)} percakapan akan dihapus</span></div></div>
-          <p className="modal-note">Seluruh percakapan, hasil analisis, dan riwayat pengambilan data topik ini akan dihapus permanen dan tidak dapat dipulihkan.</p>
-          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setPermanentDeleteTarget(null)} disabled={submitting}>Batal</button><button className="danger-button" type="button" onClick={handlePermanentDelete} disabled={submitting}><Trash />{submitting ? 'Menghapus...' : 'Hapus permanen'}</button></div>
+        <Modal title="Permanently Delete Topic" onClose={() => !submitting && setPermanentDeleteTarget(null)}>
+          <div className="modal-heading"><div><span>Permanent Deletion</span><h2>Delete “{permanentDeleteTarget.name}”?</h2></div><button className="icon-button" type="button" onClick={() => setPermanentDeleteTarget(null)} aria-label="Close" disabled={submitting}><X /></button></div>
+          <div className="topic-action-preview danger"><Trash /><div><strong>{permanentDeleteTarget.name}</strong><span>{formatCount(permanentDeleteTarget.post_count, 'post')} will be deleted</span></div></div>
+          <p className="modal-note">All posts, analyses, and collection history for this topic will be permanently deleted. This cannot be undone.</p>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setPermanentDeleteTarget(null)} disabled={submitting}>Cancel</button><button className="danger-button" type="button" onClick={handlePermanentDelete} disabled={submitting}><Trash />{submitting ? 'Deleting…' : 'Delete Permanently'}</button></div>
         </Modal>
       )}
     </div>
@@ -687,7 +679,7 @@ function ConversationRow({ post }: { post: Post }) {
     <article className="conversation-row">
       <div className="conversation-author">
         <Avatar name={post.author_name} source={post.author_avatar} large />
-        <div><strong>{post.author_name}</strong><span>@{post.author_username}</span><small>{formatNumber(post.author_followers)} pengikut</small></div>
+        <div><strong>{post.author_name}</strong><span>@{post.author_username}</span><small>{formatCount(post.author_followers, 'follower')}</small></div>
       </div>
       <div className="conversation-copy">
         <p>{post.text}</p>
@@ -698,7 +690,7 @@ function ConversationRow({ post }: { post: Post }) {
         <span><Repeat />{formatNumber(post.retweet_count)}</span>
         <span><ChatCircle />{formatNumber(post.reply_count)}</span>
         <span><Eye />{formatNumber(post.view_count)}</span>
-        <div className="conversation-actions"><a href={post.url} target="_blank" rel="noreferrer">Sumber<ArrowSquareOut /></a></div>
+        <div className="conversation-actions"><a href={post.url} target="_blank" rel="noreferrer">View on X<ArrowSquareOut /></a></div>
       </div>
     </article>
   )
@@ -710,7 +702,7 @@ function EmptyCompact({ text }: { text: string }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="dashboard-skeleton" aria-label="Memuat dashboard">
+    <div className="dashboard-skeleton" aria-label="Loading dashboard">
       <div className="skeleton metrics-placeholder" />
       <div className="skeleton chart-placeholder" />
       <div className="skeleton list-placeholder" />
