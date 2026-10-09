@@ -12,7 +12,6 @@ import io
 import json
 import os
 import re
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -59,7 +58,7 @@ NEGATIVE_WORDS = {
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def init_db() -> None:
@@ -233,7 +232,7 @@ def gemini_json(prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(request, timeout=60) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
             break
         except urllib.error.HTTPError as error:
@@ -332,12 +331,12 @@ def analyze_topic_with_gemini(topic_id: int) -> None:
             raise RuntimeError("Collect posts before starting an analysis.")
         db.execute(
             """
-            INSERT INTO ai_analyses(topic_id, status, model, post_count, key_topics_json, error)
-            VALUES (?, 'running', ?, ?, '[]', NULL)
+            INSERT INTO ai_analyses(topic_id, status, model, post_count, analyzed_at, key_topics_json, error)
+            VALUES (?, 'running', ?, ?, ?, '[]', NULL)
             ON CONFLICT(topic_id) DO UPDATE SET status = 'running', model = excluded.model,
-                post_count = excluded.post_count, error = NULL
+                post_count = excluded.post_count, analyzed_at = excluded.analyzed_at, error = NULL
             """,
-            (topic_id, model, min(len(rows), GEMINI_SUMMARY_LIMIT)),
+            (topic_id, model, min(len(rows), GEMINI_SUMMARY_LIMIT), utc_now()),
         )
 
     try:
@@ -399,13 +398,6 @@ def analyze_topic_with_gemini(topic_id: int) -> None:
         raise
 
 
-def analyze_topic_safely(topic_id: int) -> None:
-    try:
-        analyze_topic_with_gemini(topic_id)
-    except Exception as error:
-        print(f"[Gemini] Analysis failed for topic {topic_id}: {error}")
-
-
 def normalize_tweet(item: dict[str, Any]) -> dict[str, Any] | None:
     tweet_id = str(item.get("id") or item.get("tweetId") or "").strip()
     text = str(item.get("text") or item.get("fullText") or "").strip()
@@ -456,41 +448,7 @@ def normalize_tweet(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def run_tweet_actor(token: str, run_input: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    response = api_request(
-        token,
-        "POST",
-        f"/acts/{TWEET_ACTOR_API_ID}/runs",
-        query={"waitForFinish": 60, "maxTotalChargeUsd": MAX_CHARGE_USD},
-        payload=run_input,
-    )
-    run = response["data"]
-    run_id = run["id"]
-    while run.get("status") not in TERMINAL_STATUSES:
-        response = api_request(
-            token,
-            "GET",
-            f"/actor-runs/{run_id}",
-            query={"waitForFinish": 60},
-            timeout=90,
-        )
-        run = response["data"]
-        if run.get("status") not in TERMINAL_STATUSES:
-            time.sleep(1)
-    if run.get("status") != "SUCCEEDED":
-        detail = run.get("statusMessage") or "no details provided"
-        raise RuntimeError(f"Collection ended with status {run.get('status')}: {detail}")
-    dataset_id = run["defaultDatasetId"]
-    return run, get_all_dataset_items(token, dataset_id)
-
-
-def collect_topic(run_id: str, topic_id: int) -> None:
-    with connect_db() as db:
-        topic = db.execute("SELECT * FROM topics WHERE id = ? AND is_demo = 0", (topic_id,)).fetchone()
-        if topic is None:
-            return
-        db.execute("UPDATE runs SET status = 'running' WHERE id = ?", (run_id,))
-
+def collection_input(topic: dict[str, Any]) -> dict[str, Any]:
     until = datetime.now(timezone.utc)
     since = until - timedelta(days=topic["lookback_days"])
     run_input: dict[str, Any] = {
@@ -505,40 +463,20 @@ def collect_topic(run_id: str, topic_id: int) -> None:
         # This Actor uses the legacy "in" code for Indonesian.
         run_input["lang"] = "in" if topic["language"] == "id" else topic["language"]
 
+    return run_input
+
+
+def start_collection(run_id: str, topic: dict[str, Any]) -> None:
     try:
-        token = require_token()
-        apify_run, items = run_tweet_actor(token, run_input)
-        normalized = [tweet for item in items if (tweet := normalize_tweet(item)) is not None]
-        inserted = 0
+        run = api_request(
+            require_token(), "POST", f"/acts/{TWEET_ACTOR_API_ID}/runs",
+            query={"waitForFinish": 0, "maxTotalChargeUsd": MAX_CHARGE_USD},
+            payload=collection_input(topic), timeout=30,
+        )["data"]
         with connect_db() as db:
-            for tweet in normalized:
-                was_deleted = db.execute(
-                    "SELECT 1 FROM deleted_posts WHERE topic_id = ? AND tweet_id = ?",
-                    (topic_id, tweet["tweet_id"]),
-                ).fetchone()
-                if was_deleted:
-                    continue
-                columns = ", ".join(["topic_id", *tweet.keys()])
-                placeholders = ", ".join("?" for _ in range(len(tweet) + 1))
-                cursor = db.execute(
-                    f"INSERT INTO posts ({columns}) VALUES ({placeholders}) "
-                    "ON CONFLICT(topic_id, tweet_id) DO NOTHING",
-                    [topic_id, *tweet.values()],
-                )
-                inserted += cursor.rowcount
             db.execute(
-                """
-                UPDATE runs SET status = 'succeeded', finished_at = ?, items_received = ?,
-                    items_new = ?, apify_run_id = ?, dataset_id = ? WHERE id = ?
-                """,
-                (
-                    utc_now(), len(items), inserted, apify_run.get("id"),
-                    apify_run.get("defaultDatasetId"), run_id,
-                ),
-            )
-            db.execute(
-                "UPDATE topics SET last_collected_at = ? WHERE id = ?",
-                (utc_now(), topic_id),
+                "UPDATE runs SET status = 'running', apify_run_id = ?, dataset_id = ? WHERE id = ?",
+                (run["id"], run.get("defaultDatasetId"), run_id),
             )
     except Exception as error:
         with connect_db() as db:
@@ -546,6 +484,103 @@ def collect_topic(run_id: str, topic_id: int) -> None:
                 "UPDATE runs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?",
                 (utc_now(), str(error), run_id),
             )
+        raise
+
+
+def save_collection(run_id: str, topic_id: int, apify_run: dict[str, Any], items: list[dict[str, Any]]) -> None:
+    normalized = [tweet for item in items if (tweet := normalize_tweet(item)) is not None]
+    inserted = 0
+    with connect_db() as db:
+        if not db.postgres:
+            db.execute("BEGIN IMMEDIATE")
+        current = db.execute(
+            "SELECT status FROM runs WHERE id = ?" + (" FOR UPDATE" if db.postgres else ""),
+            (run_id,),
+        ).fetchone()
+        if current is None or current["status"] not in {"queued", "running"}:
+            return
+        for tweet in normalized:
+            was_deleted = db.execute(
+                "SELECT 1 FROM deleted_posts WHERE topic_id = ? AND tweet_id = ?",
+                (topic_id, tweet["tweet_id"]),
+            ).fetchone()
+            if was_deleted:
+                continue
+            columns = ", ".join(["topic_id", *tweet.keys()])
+            placeholders = ", ".join("?" for _ in range(len(tweet) + 1))
+            cursor = db.execute(
+                f"INSERT INTO posts ({columns}) VALUES ({placeholders}) "
+                "ON CONFLICT(topic_id, tweet_id) DO NOTHING",
+                [topic_id, *tweet.values()],
+            )
+            inserted += cursor.rowcount
+        db.execute(
+            """
+            UPDATE runs SET status = 'succeeded', finished_at = ?, items_received = ?,
+                items_new = ?, apify_run_id = ?, dataset_id = ? WHERE id = ?
+            """,
+            (
+                utc_now(), len(items), inserted, apify_run.get("id"),
+                apify_run.get("defaultDatasetId"), run_id,
+            ),
+        )
+        db.execute(
+            "UPDATE topics SET last_collected_at = ? WHERE id = ?",
+            (utc_now(), topic_id),
+        )
+
+
+def refresh_collection(run_id: str) -> dict[str, Any] | None:
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        return None
+    run = dict(row)
+    if run["status"] not in {"queued", "running"}:
+        return run
+    if not run["apify_run_id"]:
+        # ponytail: no job queue; recover an interrupted dispatch on the next poll.
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(run["requested_at"])
+        if age.total_seconds() > 120:
+            with connect_db() as db:
+                db.execute(
+                    "UPDATE runs SET status = 'failed', finished_at = ?, error = ? "
+                    "WHERE id = ? AND apify_run_id IS NULL AND status IN ('queued', 'running')",
+                    (utc_now(), "Collection startup was interrupted. Check Apify before retrying.", run_id),
+                )
+        else:
+            return run
+    else:
+        token = require_token()
+        remote = api_request(token, "GET", f"/actor-runs/{run['apify_run_id']}", timeout=30)["data"]
+        if remote["status"] not in TERMINAL_STATUSES:
+            return run
+        if remote["status"] == "SUCCEEDED":
+            items = get_all_dataset_items(token, remote["defaultDatasetId"])
+            save_collection(run_id, run["topic_id"], remote, items)
+        else:
+            with connect_db() as db:
+                db.execute(
+                    "UPDATE runs SET status = 'failed', finished_at = ?, error = ? "
+                    "WHERE id = ? AND status IN ('queued', 'running')",
+                    (utc_now(), f"Collection ended with status {remote['status']}: "
+                     f"{remote.get('statusMessage') or 'no details provided'}", run_id),
+                )
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def expire_analysis(db, topic_id: int) -> None:
+    # ponytail: recover terminated requests after the 300-second Vercel limit; no worker queue.
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat(timespec="seconds")
+    db.execute(
+        "UPDATE ai_analyses SET status = 'failed', error = ? "
+        "WHERE topic_id = ? AND status IN ('queued', 'running') "
+        "AND (analyzed_at IS NULL OR analyzed_at < ?)",
+        ("Analysis was interrupted. Start a new analysis to retry.", topic_id, cutoff),
+    )
+
 
 
 def topic_list(*, archived: bool = False) -> list[dict[str, Any]]:
@@ -568,6 +603,7 @@ def topic_list(*, archived: bool = False) -> list[dict[str, Any]]:
 
 def dashboard_data(topic_id: int) -> dict[str, Any] | None:
     with connect_db() as db:
+        expire_analysis(db, topic_id)
         topic = db.execute("SELECT * FROM topics WHERE id = ? AND is_demo = 0", (topic_id,)).fetchone()
         if topic is None:
             return None
@@ -730,7 +766,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def read_json(self) -> dict[str, Any]:
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            return json.loads(self.rfile.read(length) or b"{}")
+            if length < 0 or length > 16_384:
+                raise ValueError("Request body is too large.")
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("A JSON object is required.")
+            return payload
         except (ValueError, json.JSONDecodeError) as error:
             raise ValueError("The request body must contain valid JSON.") from error
 
@@ -770,8 +811,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         match = re.fullmatch(r"/api/runs/([a-f0-9-]+)", path)
         if match:
-            with connect_db() as db:
-                row = db.execute("SELECT * FROM runs WHERE id = ?", (match.group(1),)).fetchone()
+            try:
+                row = refresh_collection(match.group(1))
+            except RuntimeError as error:
+                self.send_json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
             if row is None:
                 self.send_json({"error": "Collection not found."}, HTTPStatus.NOT_FOUND)
             else:
@@ -816,8 +860,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Confirm the collection cost before continuing."}, HTTPStatus.BAD_REQUEST)
                 return
             with connect_db() as db:
+                if not db.postgres:
+                    db.execute("BEGIN IMMEDIATE")
                 topic = db.execute(
-                    "SELECT id FROM topics WHERE id = ? AND archived_at IS NULL AND is_demo = 0",
+                    "SELECT * FROM topics WHERE id = ? AND archived_at IS NULL AND is_demo = 0"
+                    + (" FOR UPDATE" if db.postgres else ""),
                     (topic_id,),
                 ).fetchone()
                 running = db.execute(
@@ -835,8 +882,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "INSERT INTO runs(id, topic_id, status, requested_at) VALUES (?, ?, 'queued', ?)",
                     (run_id, topic_id, utc_now()),
                 )
-            threading.Thread(target=collect_topic, args=(run_id, topic_id), daemon=True).start()
-            self.send_json({"run_id": run_id, "status": "queued"}, HTTPStatus.ACCEPTED)
+            try:
+                start_collection(run_id, dict(topic))
+            except Exception as error:
+                self.send_json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+                return
+            self.send_json({"run_id": run_id, "status": "running"}, HTTPStatus.ACCEPTED)
             return
 
         match = re.fullmatch(r"/api/topics/(\d+)/(archive|restore)", path)
@@ -882,14 +933,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                 return
             with connect_db() as db:
+                if not db.postgres:
+                    db.execute("BEGIN IMMEDIATE")
                 topic = db.execute(
-                    "SELECT id FROM topics WHERE id = ? AND archived_at IS NULL AND is_demo = 0",
+                    "SELECT * FROM topics WHERE id = ? AND archived_at IS NULL AND is_demo = 0"
+                    + (" FOR UPDATE" if db.postgres else ""),
                     (topic_id,),
                 ).fetchone()
                 post_count = db.execute(
                     "SELECT COUNT(*) AS post_count FROM posts WHERE topic_id = ?",
                     (topic_id,),
                 ).fetchone()["post_count"]
+                expire_analysis(db, topic_id)
                 running = db.execute(
                     "SELECT 1 FROM ai_analyses WHERE topic_id = ? AND status IN ('queued', 'running')",
                     (topic_id,),
@@ -908,18 +963,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 db.execute(
                     """
-                    INSERT INTO ai_analyses(topic_id, status, model, post_count, key_topics_json, error)
-                    VALUES (?, 'queued', ?, ?, '[]', NULL)
+                    INSERT INTO ai_analyses(topic_id, status, model, post_count, analyzed_at, key_topics_json, error)
+                    VALUES (?, 'queued', ?, ?, ?, '[]', NULL)
                     ON CONFLICT(topic_id) DO UPDATE SET status = 'queued', model = excluded.model,
-                        post_count = excluded.post_count, error = NULL
+                        post_count = excluded.post_count, analyzed_at = excluded.analyzed_at, error = NULL
                     """,
-                    (topic_id, model, post_count),
+                    (topic_id, model, post_count, utc_now()),
                 )
-            threading.Thread(target=analyze_topic_safely, args=(topic_id,), daemon=True).start()
-            self.send_json(
-                {"topic_id": topic_id, "status": "queued", "model": model},
-                HTTPStatus.ACCEPTED,
-            )
+            try:
+                analyze_topic_with_gemini(topic_id)
+            except Exception as error:
+                self.send_json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+                return
+            self.send_json({"topic_id": topic_id, "status": "succeeded", "model": model})
             return
 
         self.send_json({"error": "Endpoint not found."}, HTTPStatus.NOT_FOUND)

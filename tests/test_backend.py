@@ -1,6 +1,7 @@
 """Run against SQLite, or a disposable Postgres schema via TEST_DATABASE_URL."""
 
 import json
+import io
 import os
 import sqlite3
 import tempfile
@@ -9,11 +10,13 @@ import unittest
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import app
+import vercel_api
 from apify_api import get_all_dataset_items, load_env_file
 from database import connect_db
 from migrate_sqlite import import_sqlite
@@ -139,27 +142,38 @@ class BackendTests(unittest.TestCase):
                   "likeCount": 3, "viewCount": 5_000_000_000,
                   "author": {"userName": "tester", "name": "Test"}}]
         with patch.object(app, "require_token", return_value="test"), patch.object(
-            app, "run_tweet_actor", return_value=({"id": "actor", "defaultDatasetId": "dataset"}, items)
-        ):
+            app, "api_request", return_value={"data": {
+                "id": "actor", "defaultDatasetId": "dataset", "status": "SUCCEEDED",
+            }}
+        ) as actor_call, patch.object(app, "get_all_dataset_items", return_value=items):
             for expected in (1, 0):
-                run_id = str(uuid.uuid4())
-                with connect_db() as db:
-                    db.execute("INSERT INTO runs(id, topic_id, status, requested_at) VALUES (?, ?, 'queued', ?)",
-                               (run_id, topic_id, app.utc_now()))
-                app.collect_topic(run_id, topic_id)
-                status, run = self.request("GET", f"/api/runs/{run_id}")
+                self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/collect")[0], 400)
+                status, started = self.request("POST", f"/api/topics/{topic_id}/collect", {"confirmed": True})
+                self.assertEqual(status, 202)
+                self.assertEqual(actor_call.call_args.kwargs["query"]["waitForFinish"], 0)
+                run_id = started["run_id"]
+                self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/collect", {"confirmed": True})[0], 409)
+                # Reloading the database cannot lose the upstream run ID.
+                app.init_db()
+                with ThreadPoolExecutor(max_workers=2) as workers:
+                    responses = list(workers.map(lambda _: self.request("GET", f"/api/runs/{run_id}"), range(2)))
+                status, run = responses[0]
+                self.assertEqual(responses[1][1]["items_new"], expected)
                 self.assertEqual(status, 200)
                 self.assertEqual(run["status"], "succeeded", run.get("error"))
                 self.assertEqual(run["items_new"], expected)
+                self.assertEqual(app.dashboard_data(topic_id)["last_run"]["id"], run_id)
+                calls = actor_call.call_count
+                self.assertEqual(self.request("GET", f"/api/runs/{run_id}")[1]["items_new"], expected)
+                self.assertEqual(actor_call.call_count, calls)
         status, data = self.request("GET", f"/api/topics/{topic_id}/dashboard")
         self.assertEqual(status, 200)
         self.assertEqual(data["summary"]["views"], 5_000_000_000)
         self.assertEqual(data["top_authors"][0]["engagement"], 3)
         with patch.object(app, "require_gemini_token", return_value=("test", "test")), patch.object(
             app, "gemini_json", return_value={"summary": "Brief", "key_topics": ["KRL"]}
-        ) as analysis_call, patch.object(app, "analyze_topic_safely"):
-            self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/analyze")[0], 202)
-            app.analyze_topic_with_gemini(topic_id)
+        ) as analysis_call:
+            self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/analyze")[0], 200)
             self.assertIn("professional English", analysis_call.call_args.args[0])
             self.assertIn("untrusted data", analysis_call.call_args.args[0])
         self.assertEqual(app.dashboard_data(topic_id)["ai_analysis"]["status"], "succeeded")
@@ -170,9 +184,12 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(self.request("DELETE", f"/api/topics/{topic_id}/posts/fixture")[0], 200)
         # A manually removed post must not be resurrected by collection.
         with patch.object(app, "require_token", return_value="test"), patch.object(
-            app, "run_tweet_actor", return_value=({"id": "actor", "defaultDatasetId": "dataset"}, items)
-        ):
-            app.collect_topic(run_id, topic_id)
+            app, "api_request", return_value={"data": {
+                "id": "actor", "defaultDatasetId": "dataset", "status": "SUCCEEDED",
+            }}
+        ), patch.object(app, "get_all_dataset_items", return_value=items):
+            started = self.request("POST", f"/api/topics/{topic_id}/collect", {"confirmed": True})[1]
+            self.assertEqual(self.request("GET", f"/api/runs/{started['run_id']}")[1]["items_new"], 0)
         self.assertEqual(app.dashboard_data(topic_id)["summary"]["mentions"], 0)
         self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/archive")[0], 200)
         self.assertTrue(any(row["id"] == topic_id for row in app.topic_list(archived=True)))
@@ -182,6 +199,84 @@ class BackendTests(unittest.TestCase):
         with connect_db() as db:
             for table in ("posts", "runs", "ai_analyses", "deleted_posts"):
                 self.assertIsNone(db.execute(f"SELECT 1 FROM {table} WHERE topic_id = ?", (topic_id,)).fetchone())
+
+    def test_serverless_failures_and_interrupted_request_recovery(self):
+        topic_id = self.request("POST", "/api/topics", {"name": "Recovery", "query": "transit"})[1]["id"]
+        try:
+            with patch.object(app, "require_token", return_value="test"), patch.object(
+                app, "api_request", side_effect=RuntimeError("Apify unavailable")
+            ):
+                self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/collect", {"confirmed": True})[0], 502)
+            self.assertEqual(app.dashboard_data(topic_id)["last_run"]["status"], "failed")
+            run_id = str(uuid.uuid4())
+            with connect_db() as db:
+                db.execute("INSERT INTO runs(id, topic_id, status, requested_at, apify_run_id) "
+                           "VALUES (?, ?, 'running', ?, 'upstream')", (run_id, topic_id, app.utc_now()))
+            with patch.object(app, "require_token", return_value="test"), patch.object(app, "api_request") as remote:
+                remote.side_effect = RuntimeError("Temporary outage")
+                self.assertEqual(self.request("GET", f"/api/runs/{run_id}")[0], 503)
+                with connect_db() as db:
+                    self.assertEqual(db.execute("SELECT status FROM runs WHERE id = ?", (run_id,)).fetchone()["status"],
+                                     "running")
+                remote.side_effect = None
+                remote.return_value = {"data": {"status": "RUNNING"}}
+                self.assertEqual(self.request("GET", f"/api/runs/{run_id}")[1]["status"], "running")
+                remote.return_value = {"data": {"status": "FAILED"}}
+                self.assertEqual(self.request("GET", f"/api/runs/{run_id}")[1]["status"], "failed")
+            with connect_db() as db:
+                interrupted_id = str(uuid.uuid4())
+                db.execute("INSERT INTO runs(id, topic_id, status, requested_at) "
+                           "VALUES (?, ?, 'queued', '2020-01-01T00:00:00+00:00')", (interrupted_id, topic_id))
+                db.execute("INSERT INTO posts(topic_id, tweet_id, text, sentiment, raw_json, collected_at) "
+                           "VALUES (?, 'recovery-post', 'Test post', 'neutral', '{}', ?)", (topic_id, app.utc_now()))
+                db.execute("INSERT INTO ai_analyses(topic_id, status, model, analyzed_at) "
+                           "VALUES (?, 'running', 'test', '2020-01-01T00:00:00+00:00')", (topic_id,))
+            self.assertEqual(self.request("GET", f"/api/runs/{interrupted_id}")[1]["status"], "failed")
+            self.assertEqual(app.dashboard_data(topic_id)["ai_analysis"]["status"], "failed")
+            with patch.object(app, "require_gemini_token", return_value=("test", "test")), patch.object(
+                app, "gemini_json", side_effect=RuntimeError("Gemini unavailable")
+            ):
+                self.assertEqual(self.request("POST", f"/api/topics/{topic_id}/analyze")[0], 502)
+            self.assertEqual(app.dashboard_data(topic_id)["ai_analysis"]["status"], "failed")
+        finally:
+            with connect_db() as db:
+                db.execute("DELETE FROM topics WHERE id = ?", (topic_id,))
+
+    def test_wsgi_routes_and_safe_errors(self):
+        def request(method, path, body=None):
+            raw = json.dumps(body).encode() if body is not None else b""
+            result = {}
+            def start_response(status, headers):
+                result["status"] = int(status.split()[0])
+                result["headers"] = dict(headers)
+            content = b"".join(vercel_api.app({
+                "REQUEST_METHOD": method, "PATH_INFO": path, "wsgi.input": io.BytesIO(raw),
+                "CONTENT_LENGTH": str(len(raw)), "CONTENT_TYPE": "application/json",
+            }, start_response))
+            return result["status"], json.loads(content)
+        with patch.object(vercel_api, "_initialized", True):
+            status, data = request("POST", "/api/topics", {"name": "WSGI test", "query": "transport"})
+            self.assertEqual(status, 201)
+            topic_id = data["id"]
+            try:
+                self.assertEqual(request("GET", f"/api/topics/{topic_id}/dashboard")[0], 200)
+                self.assertEqual(request("PUT", "/api/topics")[0], 405)
+                self.assertEqual(request("POST", "/api/topics", ["invalid"])[0], 400)
+                with patch("app.connect_db", side_effect=RuntimeError("secret connection data")):
+                    status, data = request("GET", "/api/topics")
+                    self.assertEqual(status, 503)
+                    self.assertNotIn("secret", data["error"])
+            finally:
+                request("POST", f"/api/topics/{topic_id}/archive")
+                self.assertEqual(request("DELETE", f"/api/topics/{topic_id}")[0], 200)
+        with patch.object(vercel_api, "_initialized", False), patch.object(
+            vercel_api, "init_db", side_effect=RuntimeError("secret database data")
+        ):
+            self.assertEqual(request("GET", "/api/topics")[0], 503)
+            self.assertFalse(vercel_api._initialized)
+        with patch.dict(os.environ, {"VERCEL": "1", "DATABASE_URL": ""}), patch.object(vercel_api, "init_db") as init:
+            self.assertEqual(request("GET", "/api/topics")[0], 503)
+            init.assert_not_called()
 
     def test_rollback_and_invalid_topic(self):
         with self.assertRaisesRegex(RuntimeError, "rollback"):

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": ".",
+      "framework": "tanstack-start",
+      "buildCommand": "pnpm run build",
+      "bindings": [
+        { "type": "service", "service": "backend", "format": "url", "env": "SINYALX_BACKEND_URL" }
+      ]
+    },
+    "backend": {
+      "root": ".",
+      "runtime": "python",
+      "entrypoint": "vercel_api:app",
+      "functions": {
+        "vercel_api.py": {
+          "maxDuration": 300,
+          "excludeFiles": "{node_modules/**,.venv/**,.agents/**,.git/**,.neon/**,.env*,output/**,tests/**,src/**,public/**,.output/**,.vercel/**,social_listening.db*}"
+        }
+      }
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ]
+}

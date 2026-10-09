@@ -136,7 +136,8 @@ On macOS/Linux, use `cp .env.example .env`.
 | `API_GEMINI_TOKEN` | AI analysis | No default. Accepted Gemini credential name used in `.env.example`. |
 | `GEMINI_API_KEY` | AI analysis | Alternate accepted name if `API_GEMINI_TOKEN` is not set. |
 | `GEMINI_MODEL` | AI analysis | Backend default applies when omitted; set it to a model available to your Gemini account. |
-| `SINYALX_API_URL` | Dashboard-to-API connection | Python API URL used by frontend server functions. |
+| `SINYALX_API_URL` | Local dashboard-to-API connection | Defaults to `http://127.0.0.1:8765`. |
+| `SINYALX_BACKEND_URL` | Vercel internal API connection | Generated automatically by the service binding. Takes precedence over `SINYALX_API_URL`; do not set manually. |
 | `SINYALX_UI_URL` | Python root redirect | Defaults to `http://127.0.0.1:3000`. |
 | `DATABASE_URL` | Hosted PostgreSQL | Optional. A PostgreSQL URL selects hosted storage; empty or unset uses SQLite. Use a pooled URL for Neon application traffic. |
 | `DATABASE_URL_UNPOOLED` | SQLite data import | Direct PostgreSQL URL for `migrate_sqlite.py`; not needed for normal API requests. |
@@ -163,17 +164,29 @@ The script creates a consistent SQLite backup in `output/backups/`, initializes 
 
 After importing, set `DATABASE_URL` to the pooled application connection string and start the API. To return to local SQLite, explicitly set `DATABASE_URL=` in `.env` and remove any nonempty process-level `DATABASE_URL`. This switches back to the original local file; new PostgreSQL writes are not copied back automatically.
 
-### Deploy the Python API on Render
+### Deploy with Vercel and Neon
 
-After committing and pushing the backend changes, create a Python Web Service from the repository. Configure:
+The repository uses [Vercel Services](https://vercel.com/docs/services) (currently in beta) to deploy the TanStack frontend and Python API in one Vercel project. Neon stores the application data. No separate backend hosting account is required.
 
-- Build command: `pip install -r requirements.txt`
-- Start command: `python app.py --host 0.0.0.0 --port $PORT`
-- Environment: `DATABASE_URL`, `APIFY_API_TOKEN`, `API_GEMINI_TOKEN`, optional `GEMINI_MODEL`, and `SINYALX_UI_URL` set to your frontend URL.
+1. In Neon, open **Connect** for your production branch and copy the pooled PostgreSQL connection string.
+2. In the existing Vercel project's **Settings > Environment Variables**, add these server-side values for the environments you deploy:
+   - `DATABASE_URL`: the pooled Neon connection string.
+   - `APIFY_API_TOKEN`: your Apify token.
+   - `API_GEMINI_TOKEN`: your Gemini key, if you want AI analysis.
+   - `GEMINI_MODEL`: optional model override.
+3. Keep the project root at the repository root. The service-specific build settings and Python entrypoint are defined in `vercel.json`. Remove previous custom build/install/output overrides if they conflict with this configuration.
+4. Commit and push the application changes to GitHub, then open the new deployment in Vercel. If you add environment variables after deploying, redeploy so the new values take effect.
+5. Open the deployment, create a topic, and collect a small sample. Test CSV export and, optionally, an AI analysis.
 
-Set `SINYALX_API_URL` in Vercel to the Render HTTPS URL and redeploy the frontend. PostgreSQL schemas are initialized on API startup, without importing local data. New databases start empty. SQLite files on an ephemeral hosting filesystem do not provide durable storage.
+Vercel generates `SINYALX_BACKEND_URL` at runtime. The frontend calls the Python service through this internal binding; the Python API has no public rewrite. You can remove any old hosted `SINYALX_API_URL` value. API keys and database credentials must not use the `VITE_` prefix or be committed in `.env`.
 
-Authentication and request controls are still required before exposing this API to untrusted users. Background collection and analysis run in Python threads and are not resumed automatically after a process restart.
+The API initializes empty database tables on its first request. Local SQLite data is not uploaded. `DATABASE_URL` is required in Vercel; cloud requests fail safely if it is missing.
+
+Collection starts an asynchronous Apify run and stores its ID in Neon. The dashboard polls for completion, then imports the results in a transaction. Keep the dashboard open, or reopen the topic to resume polling. A cold start does not lose the run ID, and repeated polling does not duplicate posts. There is no scheduled importer when the dashboard is closed.
+
+AI analysis finishes within the initiating request. Both Vercel services use a 300-second function limit. If a request is terminated, an unfinished analysis is marked failed on the next dashboard load after six minutes, allowing a retry. Apify and Gemini quotas still apply.
+
+The application has no user authentication. Internal backend routing does not restrict access to the frontend's server functions. Use Vercel deployment protection for private use; add application authentication before offering shared public access.
 
 ## Using the dashboard
 
@@ -190,7 +203,7 @@ Choose **Create Topic** and provide:
 ### Collect and inspect
 
 1. Select a topic and choose **Collect Posts**.
-2. Confirm the collection. The app shows run progress and results when the background run completes.
+2. Confirm the collection. The dashboard polls Apify run status and imports results when the run completes.
 3. Review the post feed and dashboard metrics. Re-run collection later to add newer posts; duplicate post IDs are not inserted again.
 4. Use **Export CSV** to download posts for that topic.
 
@@ -230,11 +243,11 @@ The local Python service exposes the following routes used by the dashboard:
 | `GET` | `/api/topics` | List active topics. |
 | `GET` | `/api/topics/archived` | List archived topics. |
 | `GET` | `/api/topics/{id}/dashboard` | Return a topic's metrics, posts, and analysis state. |
-| `GET` | `/api/runs/{id}` | Return collection run status. |
+| `GET` | `/api/runs/{id}` | Check upstream collection status and import completed results. |
 | `GET` | `/api/topics/{id}/export.csv` | Export posts for a topic. |
 | `POST` | `/api/topics` | Create a topic. |
 | `POST` | `/api/topics/{id}/collect` | Start a collection run. |
-| `POST` | `/api/topics/{id}/analyze` | Start an AI analysis. |
+| `POST` | `/api/topics/{id}/analyze` | Generate and store an AI analysis before returning HTTP 200. |
 | `POST` | `/api/topics/{id}/archive` | Archive a topic. |
 | `POST` | `/api/topics/{id}/restore` | Restore an archived topic. |
 
@@ -245,6 +258,8 @@ The API also provides endpoints for topic deletion and post management used by t
 | File / directory | Responsibility |
 |---|---|
 | `app.py` | Python HTTP API, schema initialization, input validation, collection and analysis jobs, and local sentiment classification. |
+| `vercel_api.py` | WSGI entrypoint reusing the Python API routes in Vercel. |
+| `vercel.json` | Frontend and Python services, internal API binding, and public frontend routing. |
 | `database.py` | Transaction and connection boundary for SQLite and PostgreSQL. |
 | `apify_api.py` | Import-safe Apify API helpers and `.env` loading used by the backend. |
 | `migrate_sqlite.py` | Verified, atomic import of a SQLite snapshot into PostgreSQL. |

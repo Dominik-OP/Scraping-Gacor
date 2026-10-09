@@ -339,9 +339,8 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
     try {
       await analyzeTopic({ data: selectedTopic.id })
       setAiModal(false)
-      setActiveAIId(selectedTopic.id)
       await loadDashboard(selectedTopic.id)
-      showNotice('AI analysis started.')
+      showNotice('AI analysis completed.')
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Unable to start AI analysis. Try again.', true)
     } finally {
@@ -649,7 +648,7 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
             <div><span>Output</span><strong>AI Summary</strong></div>
           </div>
           <p className="modal-note">Up to 10 posts with the highest engagement are sent to Gemini. This uses your AI quota, and the results are saved.</p>
-          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAiModal(false)} disabled={submitting}>Cancel</button><button className="primary-button" type="button" onClick={handleAnalyze} disabled={submitting}><MagicWand />{submitting ? 'Starting…' : 'Start Analysis'}</button></div>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAiModal(false)} disabled={submitting}>Cancel</button><button className="primary-button" type="button" onClick={handleAnalyze} disabled={submitting}><MagicWand />{submitting ? 'Analyzing…' : 'Start Analysis'}</button></div>
         </Modal>
       )}
 

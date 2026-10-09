@@ -111,12 +111,12 @@ export type Bootstrap = {
   error: string | null
 }
 
-const API_BASE = process.env.SINYALX_API_URL ?? 'http://127.0.0.1:8765'
+const API_BASE = process.env.SINYALX_BACKEND_URL || process.env.SINYALX_API_URL || 'http://127.0.0.1:8765'
 
 async function backend<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    response = await fetch(`${API_BASE.replace(/\/$/, '')}${path}`, {
       ...init,
       cache: 'no-store',
       headers: {
@@ -196,7 +196,7 @@ export const collectTopic = createServerFn({ method: 'POST' })
 
 export const analyzeTopic = createServerFn({ method: 'POST' })
   .validator((topicId: number) => topicId)
-  .handler(async ({ data }) => backend<{ topic_id: number; status: 'queued'; model: string }>(
+  .handler(async ({ data }) => backend<{ topic_id: number; status: 'succeeded'; model: string }>(
     `/api/topics/${data}/analyze`,
     { method: 'POST' },
   ))
