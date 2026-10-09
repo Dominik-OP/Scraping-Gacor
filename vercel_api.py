@@ -35,7 +35,14 @@ def app(environ, start_response):
         if not _initialized:
             try:
                 init_db()
-            except Exception:
+            except Exception as error:
+                safe_errors = {
+                    "DATABASE_URL must be a PostgreSQL connection string",
+                    "Install PostgreSQL dependencies: pip install -r requirements.txt",
+                }
+                reason = str(error) if str(error) in safe_errors else type(error).__name__
+                print(f"Database startup failed: {reason}; SQLSTATE={getattr(error, 'sqlstate', None)}; "
+                      f"cause={type(error.__cause__).__name__}", flush=True)
                 start_response("503 Service Unavailable", [("Content-Type", "application/json")])
                 return [b'{"error":"The database is unavailable. Try again shortly."}']
             _initialized = True

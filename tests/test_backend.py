@@ -271,9 +271,10 @@ class BackendTests(unittest.TestCase):
                 self.assertEqual(request("DELETE", f"/api/topics/{topic_id}")[0], 200)
         with patch.object(vercel_api, "_initialized", False), patch.object(
             vercel_api, "init_db", side_effect=RuntimeError("secret database data")
-        ):
+        ), patch("builtins.print") as startup_log:
             self.assertEqual(request("GET", "/api/topics")[0], 503)
             self.assertFalse(vercel_api._initialized)
+            self.assertNotIn("secret database data", str(startup_log.call_args))
         with patch.dict(os.environ, {"VERCEL": "1", "DATABASE_URL": ""}), patch.object(vercel_api, "init_db") as init:
             self.assertEqual(request("GET", "/api/topics")[0], 503)
             init.assert_not_called()
