@@ -10,3 +10,6 @@ node_modules/
 .output/
 .vinxi/
 dist/
+.neon
+.agents/skills/
+skills-lock.json
