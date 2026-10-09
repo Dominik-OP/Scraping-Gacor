@@ -111,8 +111,8 @@ The Python backend uses the standard library; there is no `pip install` step for
 ### 1. Get the project and install frontend packages
 
 ```bash
-git clone <your-repository-url>
-cd <repository-folder>
+git clone https://github.com/Dominik-OP/Scraping-Gacor
+cd Scraping-Gacor
 npm install
 ```
 
