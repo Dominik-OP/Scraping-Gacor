@@ -116,8 +116,6 @@ cd Scraping-Gacor
 npm install
 ```
 
-Replace `<your-repository-url>` and `<repository-folder>` with your repository's actual URL and directory name.
-
 ### 2. Add credentials
 
 Copy `.env.example` to `.env` in the repository root. Then replace the placeholder values:
