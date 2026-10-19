@@ -23,7 +23,7 @@ import type {
   SentimentCounts,
 } from '../server/api'
 
-const COMMUNITY_COLORS = ['#657d72', '#9e8160', '#88849b', '#a86f70', '#648b98', '#8d956b', '#ab829a', '#777d89']
+const COMMUNITY_COLORS = Array.from({ length: 8 }, (_, index) => `var(--community-${index + 1})`)
 
 export const roleLabels: Record<NetworkRole, string> = {
   influencer: 'Influencer',
