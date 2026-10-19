@@ -1,7 +1,5 @@
 import {
   ArrowSquareOut,
-  Fire,
-  GlobeHemisphereEast,
   Graph,
   Hash,
   Info,
@@ -25,10 +23,7 @@ import type {
   SentimentCounts,
 } from '../server/api'
 
-const MAP_COLUMNS = 16
-const MAP_ROWS = 7
-
-const COMMUNITY_COLORS = ['#4f8ef7', '#2fbf96', '#e9a23b', '#ef6b7a', '#a77bf3', '#33b5d6', '#e07fc0', '#8fbf4d']
+const COMMUNITY_COLORS = ['#657d72', '#9e8160', '#88849b', '#a86f70', '#648b98', '#8d956b', '#ab829a', '#777d89']
 
 export const roleLabels: Record<NetworkRole, string> = {
   influencer: 'Influencer',
@@ -88,199 +83,77 @@ function NetSentiment({ value }: { value: number }) {
   return <span className={`net-sentiment ${tone}`} title="Net sentiment: positive share minus negative share">{value > 0 ? '+' : ''}{value}</span>
 }
 
-function heatStyle(value: number) {
-  if (!value) return undefined
-  const strength = Math.round(18 + value * 0.72)
-  return {
-    background: `color-mix(in srgb, var(--heat) ${strength}%, var(--surface-soft))`,
-    borderColor: `color-mix(in srgb, var(--heat) ${Math.min(100, strength + 12)}%, var(--line))`,
-    color: value >= 55 ? '#fff' : undefined,
-  }
-}
-
 type GeoMode = 'authors' | 'mentions'
 
 export function GeoPanel({ data }: { data: GeoInsights }) {
   const [mode, setMode] = useState<GeoMode>('authors')
-  const valueOf = (province: ProvinceRegion) => mode === 'authors' ? province.posts : province.mentioned_in
-  const heatOf = (province: ProvinceRegion) => mode === 'authors' ? province.heat : province.mention_heat
-  const ranked = useMemo(
-    () => [...data.provinces].filter((province) => valueOf(province) > 0)
-      .sort((left, right) => valueOf(right) - valueOf(left) || left.name.localeCompare(right.name)),
-    [data, mode],
-  )
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
-  const selected = data.provinces.find((province) => province.code === selectedCode) ?? ranked[0] ?? null
+  const valueOf = (province: ProvinceRegion) => mode === 'authors' ? province.posts : province.mentioned_in
+  const ranked = [...data.provinces].filter((province) => valueOf(province) > 0)
+    .sort((left, right) => valueOf(right) - valueOf(left) || left.name.localeCompare(right.name))
+  const selected = ranked.find((province) => province.code === selectedCode) ?? ranked[0] ?? null
+  const mention = data.mentions.find((row) => row.code === selected?.code)
   const coverage = data.coverage
-  const activeProvinces = ranked.length
   const maxValue = Math.max(1, ...ranked.map(valueOf))
   const sources = Object.entries(coverage.sources)
-    .sort((left, right) => (right[1] ?? 0) - (left[1] ?? 0))
     .map(([key, count]) => `${sourceLabels[key] ?? key} (${formatNumber(count ?? 0)})`)
 
   return (
     <section className="panel geo-panel" aria-labelledby="geo-heading">
       <div className="panel-heading">
-        <div>
-          <h2 id="geo-heading">Regional Distribution</h2>
-          <p>Where the conversation comes from and which regions it talks about.</p>
-        </div>
-        <div className="segmented" role="group" aria-label="Region view">
-          <button type="button" aria-pressed={mode === 'authors'} onClick={() => setMode('authors')}><MapPin />Author Location</button>
-          <button type="button" aria-pressed={mode === 'mentions'} onClick={() => setMode('mentions')}><Hash />Mentioned Regions</button>
-        </div>
+        <div><h2 id="geo-heading">Where the conversation happens</h2><p>Ranked by collected posts. Select a province to see more.</p></div>
       </div>
-
-      <div className="geo-coverage">
-        <div><span>Posts with a province</span><strong>{formatPercent(coverage.located_share)}</strong><small>{formatNumber(coverage.province)} of {formatCount(coverage.posts, 'post')}</small></div>
-        <div><span>Active provinces</span><strong>{formatNumber(activeProvinces)}</strong><small>of 38 provinces</small></div>
-        <div><span>Indonesia, no province</span><strong>{formatNumber(coverage.country_only)}</strong><small>Country-level profiles</small></div>
-        <div><span>Outside Indonesia</span><strong>{formatNumber(coverage.foreign)}</strong><small>{data.foreign.slice(0, 2).map((row) => row.country).join(', ') || 'None detected'}</small></div>
+      <div className="segmented" role="group" aria-label="Region view">
+        <button type="button" aria-pressed={mode === 'authors'} onClick={() => setMode('authors')}>Author location</button>
+        <button type="button" aria-pressed={mode === 'mentions'} onClick={() => setMode('mentions')}>Mentioned in posts</button>
       </div>
-
+      <p className="geo-context">{mode === 'authors'
+        ? <><strong>{formatNumber(coverage.province)} of {formatCount(coverage.posts, 'post')}</strong> have an Indonesian province ({formatPercent(coverage.located_share)}). Locations are indicative, mainly self-reported.</>
+        : <>Places named in post text. A mention does not establish where the author lives, and one post may name several regions.</>}</p>
       <div className="geo-layout">
-        <div className="geo-map-wrap">
-          <div className="geo-map" role="group" aria-label={`Indonesia province heat map by ${mode === 'authors' ? 'author location' : 'regions mentioned in posts'}`}>
-            {data.provinces.map((province) => {
-              const value = valueOf(province)
-              const heat = heatOf(province)
-              return (
-                <button
-                  type="button"
-                  key={province.code}
-                  className={`geo-tile${province.code === selected?.code ? ' selected' : ''}${value ? '' : ' empty'}`}
-                  style={{ gridColumn: province.col + 1, gridRow: province.row + 1, ...heatStyle(heat) }}
-                  onClick={() => setSelectedCode(province.code)}
-                  aria-label={`${province.name}: ${formatCount(value, 'post')}, heat ${heat}`}
-                  aria-pressed={province.code === selected?.code}
-                  title={`${province.name} · ${formatCount(value, 'post')}`}
-                >
-                  <span>{province.code}</span>
-                  {value > 0 && <b>{formatNumber(value)}</b>}
-                </button>
-              )
-            })}
-          </div>
-          <div className="geo-legend" aria-hidden>
-            <span>Low</span><i /><span>Hot</span>
-            <small>Heat combines post volume (65%) and engagement (35%).</small>
-          </div>
+        <div className="table-scroll">
+          {ranked.length ? <table className="region-table">
+            <caption className="sr-only">Provinces ranked by {mode === 'authors' ? 'author location' : 'mentions in posts'}</caption>
+            <thead><tr><th scope="col">Province</th><th scope="col">Posts</th>{mode === 'authors' && <><th scope="col">People</th><th scope="col">Threads</th></>}</tr></thead>
+            <tbody>{ranked.map((province) => <tr key={province.code} className={province.code === selected?.code ? 'selected' : ''}>
+              <td><button type="button" onClick={() => setSelectedCode(province.code)} aria-pressed={province.code === selected?.code}><span>{province.name}</span><i aria-hidden style={{ width: `${valueOf(province) / maxValue * 100}%` }} /></button></td>
+              <td>{formatNumber(valueOf(province))}</td>
+              {mode === 'authors' && <><td>{formatNumber(province.authors)}</td><td>{formatNumber(province.threads)}</td></>}
+            </tr>)}</tbody>
+          </table> : <div className="compact-empty">{mode === 'authors' ? 'No posts could be placed in a province yet.' : 'No Indonesian regions are named in these posts.'}</div>}
         </div>
-
-        <aside className="geo-detail" aria-live="polite">
-          {selected && valueOf(selected) > 0 ? (
-            <>
-              <header>
-                <span className="geo-detail-icon" style={heatStyle(heatOf(selected))}><Fire /></span>
-                <div><strong>{selected.name}</strong><small>Heat {heatOf(selected)} / 100</small></div>
-                {mode === 'authors' && selected.trend && (
-                  <span className={`trend-badge ${selected.trend}`}>{trendIcon(selected.trend)}{trendLabels[selected.trend]}</span>
-                )}
-              </header>
-              {mode === 'authors' ? (
-                <>
-                  <dl className="geo-facts">
-                    <div><dt>Posts</dt><dd>{formatNumber(selected.posts)}</dd></div>
-                    <div><dt>Authors</dt><dd>{formatNumber(selected.authors)}</dd></div>
-                    <div><dt>Observed threads</dt><dd>{formatNumber(selected.threads)}</dd></div>
-                    <div><dt>Engagement</dt><dd>{formatNumber(selected.engagement)}</dd></div>
-                    <div><dt>Share</dt><dd>{formatPercent(selected.share)}</dd></div>
-                    <div><dt>Latest 24h in sample</dt><dd>{formatNumber(selected.recent_posts)}</dd></div>
-                    <div><dt>Net sentiment</dt><dd><NetSentiment value={selected.net_sentiment} /></dd></div>
-                  </dl>
-                  <SentimentBar values={selected.sentiment} />
-                  {selected.top_cities.length > 0 && (
-                    <div className="geo-tags"><span>Cities</span><div>{selected.top_cities.map((city) => <b key={city.name}>{city.name} · {formatNumber(city.posts)}</b>)}</div></div>
-                  )}
-                  {selected.top_hashtags.length > 0 && (
-                    <div className="geo-tags"><span>Hashtags</span><div>{selected.top_hashtags.map((tag) => <b key={tag}>#{tag}</b>)}</div></div>
-                  )}
-                  {selected.mentioned_in > 0 && <p className="geo-note">Also mentioned in {formatCount(selected.mentioned_in, 'post')}.</p>}
-                </>
-              ) : (
-                <>
-                  <dl className="geo-facts">
-                    <div><dt>Posts mentioning</dt><dd>{formatNumber(selected.mentioned_in)}</dd></div>
-                    <div><dt>Authors located here</dt><dd>{formatNumber(selected.authors)}</dd></div>
-                  </dl>
-                  {(() => {
-                    const mention = data.mentions.find((row) => row.code === selected.code)
-                    return mention ? (
-                      <>
-                        <dl className="geo-facts">
-                          <div><dt>Engagement</dt><dd>{formatNumber(mention.engagement)}</dd></div>
-                          <div><dt>Net sentiment</dt><dd><NetSentiment value={mention.net_sentiment} /></dd></div>
-                        </dl>
-                        {mention.top_cities.length > 0 && <div className="geo-tags"><span>Places named</span><div>{mention.top_cities.map((city) => <b key={city}>{city}</b>)}</div></div>}
-                      </>
-                    ) : null
-                  })()}
-                </>
-              )}
-            </>
-          ) : (
-            <div className="compact-empty geo-empty"><MapPin /><span>{mode === 'authors' ? 'No posts could be placed in a province yet.' : 'No Indonesian regions are named in collected posts.'}</span></div>
-          )}
-        </aside>
+        {selected && <aside className="geo-detail" aria-live="polite">
+          <header><div><small>Selected province</small><strong>{selected.name}</strong></div></header>
+          {mode === 'authors' ? <>
+            <dl className="geo-facts">
+              <div><dt>Share of located posts</dt><dd>{formatPercent(selected.share)}</dd></div>
+              <div><dt>Engagement</dt><dd>{formatNumber(selected.engagement)}</dd></div>
+              <div><dt>Latest 24h in sample</dt><dd>{formatNumber(selected.recent_posts)}</dd></div>
+              <div><dt>Net sentiment</dt><dd><NetSentiment value={selected.net_sentiment} /></dd></div>
+            </dl>
+            <SentimentBar values={selected.sentiment} />
+            {selected.trend && <p className={`trend-badge ${selected.trend}`}>{trendIcon(selected.trend)}{trendLabels[selected.trend]} share of conversation</p>}
+            {selected.top_cities.length > 0 && <div className="geo-tags"><span>Cities</span><div>{selected.top_cities.map((city) => <b key={city.name}>{city.name} · {formatNumber(city.posts)}</b>)}</div></div>}
+            {selected.top_hashtags.length > 0 && <div className="geo-tags"><span>Hashtags</span><div>{selected.top_hashtags.map((tag) => <b key={tag}>#{tag}</b>)}</div></div>}
+          </> : mention && <>
+            <dl className="geo-facts"><div><dt>Engagement</dt><dd>{formatNumber(mention.engagement)}</dd></div><div><dt>Net sentiment</dt><dd><NetSentiment value={mention.net_sentiment} /></dd></div></dl>
+            {mention.top_cities.length > 0 && <div className="geo-tags"><span>Places named</span><div>{mention.top_cities.map((city) => <b key={city}>{city}</b>)}</div></div>}
+          </>}
+        </aside>}
       </div>
-
-      <div className="geo-lists">
-        <div>
-          <h3><Fire />{mode === 'authors' ? 'Most Posts by Region' : 'Most Mentioned Regions'}</h3>
-          {ranked.length ? (
-            <ol className="rank-list">
-              {ranked.slice(0, 8).map((province, index) => (
-                <li key={province.code}>
-                  <button type="button" onClick={() => setSelectedCode(province.code)} aria-label={`Show ${province.name}`} title={`${formatCount(province.posts, 'post')} · ${formatCount(province.threads, 'thread')} observed`}>
-                    <span className="rank-index">{index + 1}</span>
-                    <span className="rank-name"><strong>{province.name}</strong><i style={{ width: `${valueOf(province) / maxValue * 100}%` }} /></span>
-                    <b>{formatNumber(valueOf(province))}</b>
-                    {mode === 'authors' && province.trend
-                      ? <span className={`trend-badge compact ${province.trend}`} title={trendLabels[province.trend]}>{trendIcon(province.trend)}</span>
-                      : <span className="trend-badge compact placeholder" aria-hidden />}
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : <div className="compact-empty">No regions to rank.</div>}
-        </div>
-        <div>
-          <h3><MapPin />{mode === 'authors' ? 'Top Cities' : 'Most Mentioned'}</h3>
-          {mode === 'authors' ? (data.cities.length ? (
-            <ul className="plain-list">
-              {data.cities.slice(0, 8).map((city) => (
-                <li key={`${city.province_code}-${city.name}`}><div><strong>{city.name}</strong><small>{city.province}</small></div><NetSentiment value={city.net_sentiment} /><b>{formatNumber(city.posts)}</b></li>
-              ))}
-            </ul>
-          ) : <div className="compact-empty">No city-level locations.</div>) : (data.mentions.length ? (
-            <ul className="plain-list">
-              {data.mentions.slice(0, 8).map((row) => (
-                <li key={row.code}><div><strong>{row.name}</strong><small>{row.top_cities.join(', ') || 'Province named'}</small></div><NetSentiment value={row.net_sentiment} /><b>{formatNumber(row.posts)}</b></li>
-              ))}
-            </ul>
-          ) : <div className="compact-empty">No regions mentioned.</div>)}
-        </div>
-        <div>
-          <h3><GlobeHemisphereEast />Outside Indonesia</h3>
-          {data.foreign.length ? (
-            <ul className="plain-list">
-              {data.foreign.map((row) => <li key={row.country}><div><strong>{row.country}</strong></div><b>{formatNumber(row.posts)}</b></li>)}
-            </ul>
-          ) : <div className="compact-empty">No foreign locations detected.</div>}
-        </div>
-      </div>
-
-      <p className="method-note">
-        <Info aria-hidden />
-        <span>
-          Locations come from {sources.join(', ') || 'author profiles'}; {formatNumber(coverage.unknown)} posts had no recognizable location.
-          Profiles are self-reported, so treat regions as indicative.
-          {' '}Thread IDs are available for {formatCount(coverage.posts_with_thread, 'post')}, covering {formatCount(coverage.threads, 'thread')}. A thread can appear in several regions; replies outside the search are not included.
-          {data.trend_window.enabled
-            ? ` Trends compare each province's share of the latest ${data.trend_window.recent_hours} hours with its overall share.`
-            : ' Trends appear once posts span more than 36 hours.'}
-        </span>
-      </p>
+      <details className="disclosure">
+        <summary>Location coverage & method</summary>
+        <dl className="coverage-facts">
+          <div><dt>Location unknown</dt><dd>{formatCount(coverage.unknown, 'post')}</dd></div>
+          <div><dt>Indonesia, province unknown</dt><dd>{formatCount(coverage.country_only, 'post')}</dd></div>
+          <div><dt>Outside Indonesia</dt><dd>{formatCount(coverage.foreign, 'post')}</dd></div>
+        </dl>
+        {data.foreign.length > 0 && <p className="method-note">Outside Indonesia: {data.foreign.map((row) => `${row.country} (${row.posts})`).join(', ')}.</p>}
+        <p className="method-note">Sources: {sources.join(', ') || 'No recognized locations'}. Profile locations may be outdated or inaccurate. Unrecognized locations stay unknown.</p>
+        <p className="method-note">Thread IDs are available for {formatCount(coverage.posts_with_thread, 'post')}, covering {formatCount(coverage.threads, 'thread')}. A thread may appear in several provinces. Replies outside the search are not included.</p>
+        <p className="method-note">Net sentiment is positive share minus negative share. {data.trend_window.enabled ? `Trends compare each province's share in the latest ${data.trend_window.recent_hours} hours with its overall share.` : 'Trends appear once posts span more than 36 hours.'}</p>
+      </details>
+      {data.cities.length > 0 && <details className="disclosure"><summary>City breakdown</summary><ul className="plain-list city-list">{data.cities.map((city) => <li key={`${city.province_code}-${city.name}`}><div><strong>{city.name}</strong><small>{city.province}</small></div><span>{formatCount(city.posts, 'post')}</span></li>)}</ul></details>}
     </section>
   )
 }
@@ -345,7 +218,7 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
   if (!stats.nodes) {
     return (
       <section className="panel network-panel" aria-labelledby="network-heading">
-        <div className="panel-heading"><div><h2 id="network-heading">Social Network Analysis</h2><p>Who interacts with whom through replies, mentions, quotes, and reposts.</p></div></div>
+        <div className="panel-heading"><div><h2 id="network-heading">Who connects the conversation</h2><p>Dots are accounts; lines show interactions. Select an account for details.</p></div></div>
         <div className="compact-empty network-empty"><ShareNetwork /><span>No interactions between accounts in the collected posts yet. Collect more posts or broaden the query.</span></div>
       </section>
     )
@@ -356,19 +229,13 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
   return (
     <section className="panel network-panel" aria-labelledby="network-heading">
       <div className="panel-heading">
-        <div><h2 id="network-heading">Social Network Analysis</h2><p>Who interacts with whom through replies, mentions, quotes, and reposts.</p></div>
-        <span className="range-label">{formatCount(stats.nodes, 'account')} · {formatCount(stats.interactions, 'interaction')}</span>
+        <div><h2 id="network-heading">Who connects the conversation</h2><p>Dots are accounts; lines show interactions. Select an account for details.</p></div>
       </div>
 
       <dl className="network-stats">
         <div><dt>Accounts</dt><dd>{formatNumber(stats.nodes)}</dd><small>{formatNumber(stats.referenced_accounts)} only referenced</small></div>
         <div><dt>Connections</dt><dd>{formatNumber(stats.edges)}</dd><small>Avg. degree {stats.average_degree}</small></div>
         <div><dt>Communities</dt><dd>{formatNumber(stats.communities)}</dd><small>{stats.components} separate groups</small></div>
-        <div title={metricHelp.modularity}><dt>Modularity</dt><dd>{stats.modularity.toFixed(2)}</dd><small>{stats.modularity >= 0.3 ? 'Clearly clustered' : 'Weak clustering'}</small></div>
-        <div title={metricHelp.density}><dt>Density</dt><dd>{formatPercent(stats.density, 2)}</dd><small>Possible links present</small></div>
-        <div title={metricHelp.reciprocity}><dt>Reciprocity</dt><dd>{formatPercent(stats.reciprocity)}</dd><small>Two-way links</small></div>
-        <div title={metricHelp.centralization}><dt>Centralization</dt><dd>{stats.centralization.toFixed(2)}</dd><small>{stats.centralization >= 0.3 ? 'Few dominant hubs' : 'Spread out'}</small></div>
-        <div><dt>Unconnected authors</dt><dd>{formatNumber(stats.isolated_authors)}</dd><small>of {formatNumber(stats.authors)} authors</small></div>
       </dl>
 
       <div className="network-layout">
@@ -434,14 +301,12 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
             </g>
           </svg>
           <div className="network-legend">
-            {data.communities.slice(0, 8).map((community, index) => (
-              <span key={community.id}><i style={{ background: COMMUNITY_COLORS[index % COMMUNITY_COLORS.length] }} />{community.label}</span>
-            ))}
             <span className="edge-key reply">Reply</span>
             <span className="edge-key mention">Mention</span>
             <span className="edge-key quote">Quote</span>
             <span className="edge-key retweet">Repost</span>
           </div>
+          <p className="graph-note">Larger dots have more influence. Colors group communities; hollow dots are referenced accounts.</p>
           {graph.truncated && <p className="graph-note">Showing {graph.nodes.length} of {formatNumber(stats.nodes)} accounts, keeping whole clusters from the largest down.</p>}
         </div>
 
@@ -502,6 +367,9 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
           </table>
         </div>
 
+      </div>
+
+      <details className="disclosure"><summary>Interaction patterns & bridges</summary>
         <div className="network-side">
           <div>
             <h3><Graph />Interaction Types</h3>
@@ -525,20 +393,12 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
               </ul>
             ) : <div className="compact-empty">No accounts connect separate clusters.</div>}
           </div>
-          <div>
-            <h3><UsersThree />Role Mix</h3>
-            <div className="role-mix">
-              {(Object.keys(roleLabels) as NetworkRole[]).filter((role) => stats.roles[role]).map((role) => (
-                <span key={role} className={`role-badge ${role}`} title={roleDescriptions[role]}>{roleLabels[role]} <b>{formatNumber(stats.roles[role] ?? 0)}</b></span>
-              ))}
-            </div>
-          </div>
         </div>
-      </div>
+      </details>
 
       {data.communities.length > 0 && (
-        <div className="community-section">
-          <h3><Graph />Communities</h3>
+        <details className="disclosure community-section">
+          <summary>Communities</summary>
           <div className="community-grid">
             {data.communities.map((community, index) => (
               <article key={community.id} className="community-card" style={{ borderTopColor: COMMUNITY_COLORS[index % COMMUNITY_COLORS.length] }}>
@@ -555,9 +415,10 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
               </article>
             ))}
           </div>
-        </div>
+        </details>
       )}
 
+      <details className="disclosure"><summary>Strongest ties & shared hashtags</summary>
       <div className="network-sections two">
         <div>
           <h3><ShareNetwork />Strongest Ties</h3>
@@ -584,6 +445,15 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
         </div>
       </div>
 
+      </details>
+      <details className="disclosure"><summary>Network metrics & method</summary>
+      <dl className="advanced-stats">
+        <div title={metricHelp.modularity}><dt>Modularity</dt><dd>{stats.modularity.toFixed(2)}</dd><small>{stats.modularity >= 0.3 ? 'Clearly clustered' : 'Weak clustering'}</small></div>
+        <div title={metricHelp.density}><dt>Density</dt><dd>{formatPercent(stats.density, 2)}</dd><small>Possible links present</small></div>
+        <div title={metricHelp.reciprocity}><dt>Reciprocity</dt><dd>{formatPercent(stats.reciprocity)}</dd><small>Two-way links</small></div>
+        <div title={metricHelp.centralization}><dt>Centralization</dt><dd>{stats.centralization.toFixed(2)}</dd><small>{stats.centralization >= 0.3 ? 'Few dominant hubs' : 'Spread out'}</small></div>
+        <div><dt>Unconnected authors</dt><dd>{formatNumber(stats.isolated_authors)}</dd><small>of {formatNumber(stats.authors)} authors</small></div>
+      </dl>
       <p className="method-note">
         <Info aria-hidden />
         <span>
@@ -591,6 +461,7 @@ export function NetworkPanel({ data }: { data: NetworkInsights }) {
           Communities use Louvain clustering. Only interactions visible in collected posts are included, not follower relationships.
         </span>
       </p>
+      </details>
     </section>
   )
 }

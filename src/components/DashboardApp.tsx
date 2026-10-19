@@ -4,12 +4,12 @@ import {
   ArrowSquareOut,
   ArrowsClockwise,
   Broadcast,
+  IconContext,
   ChatCircle,
   ChatsCircle,
   CheckCircle,
   DownloadSimple,
   Eye,
-  Hash,
   Heart,
   List,
   MagicWand,
@@ -52,10 +52,17 @@ import {
 } from '../server/api'
 
 type Theme = 'light' | 'dark'
+type DashboardView = 'overview' | 'regions' | 'network' | 'posts'
 type SentimentFilter = 'all' | Post['sentiment']
 type Notice = { message: string; error?: boolean } | null
 
-const metricIcons = [ChatsCircle, Pulse, Users, Broadcast]
+const metricIcons = [ChatsCircle, Users, Pulse]
+const views: Array<{ id: DashboardView; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'regions', label: 'Regions' },
+  { id: 'network', label: 'Network' },
+  { id: 'posts', label: 'Posts' },
+]
 
 function Avatar({ name, source, large = false }: { name: string; source?: string; large?: boolean }) {
   return (
@@ -66,15 +73,22 @@ function Avatar({ name, source, large = false }: { name: string; source?: string
 }
 
 function Modal({ children, title, onClose }: { children: ReactNode; title: string; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => dialog?.close()
+  }, [])
+
+  return <dialog ref={dialogRef} className="modal-card" aria-label={title}
+    onCancel={(event) => { event.preventDefault(); onClose() }}
+    onClick={(event) => {
+      if (event.target !== event.currentTarget) return
+      const bounds = event.currentTarget.getBoundingClientRect()
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose()
     }}>
-      <section className="modal-card" role="dialog" aria-modal="true" aria-label={title}>
-        {children}
-      </section>
-    </div>
-  )
+    {children}
+  </dialog>
 }
 
 export function DashboardApp({ initial }: { initial: Bootstrap }) {
@@ -93,7 +107,8 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
   const [archiveTarget, setArchiveTarget] = useState<Topic | null>(null)
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<Topic | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
-  const [theme, setTheme] = useState<Theme>('dark')
+  const [theme, setTheme] = useState<Theme>('light')
+  const [view, setView] = useState<DashboardView>('overview')
   const [sentimentFilter, setSentimentFilter] = useState<SentimentFilter>('all')
   const [regionFilter, setRegionFilter] = useState<string>('all')
   const [notice, setNotice] = useState<Notice>(null)
@@ -118,7 +133,7 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
 
   useEffect(() => {
     const saved = localStorage.getItem('sinyalx-theme') as Theme | null
-    const preferred = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+    const preferred: Theme = 'light'
     setTheme(saved === 'light' || saved === 'dark' ? saved : preferred)
   }, [])
 
@@ -181,6 +196,8 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
     }
     setInsights((current) => current?.topic_id === selectedId ? current : null)
     setRegionFilter('all')
+    setSentimentFilter('all')
+    setView('overview')
     void loadDashboard(selectedId)
   }, [loadDashboard, selectedId])
 
@@ -267,25 +284,26 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
     }
   }, [activeAIId, selectedId, showNotice])
 
-  const metrics = useMemo(() => {
-    const summary = dashboard?.summary
-    return [
-      { label: 'Total Posts', value: summary?.mentions ?? 0, note: 'Collected posts' },
-      { label: 'Total Engagement', value: summary?.engagement ?? 0, note: 'Likes, reposts, replies, and quotes' },
-      { label: 'Unique Authors', value: summary?.authors ?? 0, note: 'Accounts contributing posts' },
-      { label: 'Combined Followers', value: summary?.audience ?? 0, note: 'Total followers across unique authors' },
-    ]
-  }, [dashboard])
+  const metrics = [
+    { label: 'Posts collected', value: dashboard?.summary.mentions ?? 0, note: 'In this topic sample' },
+    { label: 'People posting', value: dashboard?.summary.authors ?? 0, note: 'Unique accounts' },
+    { label: 'Engagement', value: dashboard?.summary.engagement ?? 0, note: 'Likes, reposts, replies and quotes' },
+  ]
+  const featuredPost = dashboard?.top_posts.most_popular
 
-  const topConversations = useMemo(() => {
-    const top = dashboard?.top_posts
-    return [
-      { label: 'Most Liked', note: 'Highest number of likes', post: top?.most_liked ?? null, Icon: Heart, value: top?.most_liked?.like_count ?? 0 },
-      { label: 'Most Reposted', note: 'Highest number of reposts', post: top?.most_reposted ?? null, Icon: Repeat, value: top?.most_reposted?.retweet_count ?? 0 },
-      { label: 'Most Discussed', note: 'Replies and quotes', post: top?.most_discussed ?? null, Icon: ChatCircle, value: (top?.most_discussed?.reply_count ?? 0) + (top?.most_discussed?.quote_count ?? 0) },
-      { label: 'Highest Engagement', note: 'Total Engagement', post: top?.most_popular ?? null, Icon: Broadcast, value: top?.most_popular ? top.most_popular.like_count + top.most_popular.retweet_count + top.most_popular.reply_count + top.most_popular.quote_count : 0 },
-    ]
-  }, [dashboard])
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const blocks = document.querySelectorAll<HTMLElement>('[data-reveal]')
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        entry.target.classList.remove('reveal-pending')
+        observer.unobserve(entry.target)
+      }
+    }, { threshold: 0 })
+    blocks.forEach((block) => { block.classList.add('reveal-pending'); observer.observe(block) })
+    return () => { observer.disconnect(); blocks.forEach((block) => block.classList.remove('reveal-pending')) }
+  }, [view, dashboard, insights])
 
   const filteredPosts = useMemo(() => {
     const posts = dashboard?.posts ?? []
@@ -441,6 +459,7 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
   }
 
   return (
+    <IconContext.Provider value={{ weight: 'bold' }}>
     <div className="app-shell">
       <aside className={`sidebar${mobileNav ? ' sidebar-open' : ''}`}>
         <div className="brand-block">
@@ -489,13 +508,11 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
 
         <div className="connection-panel">
           <span className={`connection-state${initial.config.token_configured ? '' : ' unavailable'}`}>
-            <i />{initial.config.token_configured ? 'Apify Connected' : 'Collection Unavailable'}
+            <i />{initial.config.token_configured ? 'Collection ready' : 'Collection unavailable'}
           </span>
-          <small>{initial.config.token_configured ? 'Ready to collect posts' : 'Collection is not configured'}</small>
           <span className={`connection-state ai${initial.config.gemini_configured ? '' : ' unavailable'}`}>
-            <i />{initial.config.gemini_configured ? 'AI Analysis Ready' : 'AI Analysis Unavailable'}
+            <i />{initial.config.gemini_configured ? 'AI summary ready' : 'AI summary unavailable'}
           </span>
-          <small>{initial.config.gemini_configured ? initial.config.gemini_model : 'AI analysis is not configured'}</small>
         </div>
       </aside>
 
@@ -505,9 +522,9 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
         <header className="topbar">
           <button className="icon-button menu-button" type="button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><List /></button>
           <div className="page-identity">
-            <span>Social Listening</span>
+            <span>Topic dashboard</span>
             <h1>{selectedTopic?.name ?? 'Conversation Overview'}</h1>
-            <p>{selectedTopic?.query ?? 'Create a topic to monitor conversations on X.'}</p>
+            <p>{selectedTopic ? `Search: ${selectedTopic.query}` : 'Create a topic to monitor conversations on X.'}</p>
           </div>
           <div className="topbar-actions">
             <button className="icon-button" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Switch theme">
@@ -515,7 +532,6 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
             </button>
             {selectedTopic && <>
               <button className="secondary-button" type="button" onClick={handleExport}><DownloadSimple />Export CSV</button>
-              <button className="secondary-button ai-button" type="button" onClick={openAIAnalysis} disabled={activeAIId === selectedTopic.id}><MagicWand />{activeAIId === selectedTopic.id ? 'Analyzing…' : 'AI Analysis'}</button>
               <button className="primary-button" type="button" onClick={openCollection} disabled={Boolean(activeRunId)}><ArrowsClockwise />{activeRunId ? 'Collecting…' : 'Collect Posts'}</button>
             </>}
           </div>
@@ -544,119 +560,92 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
           <DashboardSkeleton />
         ) : dashboard ? (
           <div className="dashboard-content">
-            <section className="metrics-strip" aria-label="Key metrics">
-              {metrics.map((metric, index) => {
-                const Icon = metricIcons[index]
-                return (
-                  <article className="metric-item" key={metric.label}>
+            <div className="dashboard-toolbar">
+              <nav className="view-nav" aria-label="Dashboard views">
+                {views.map((item) => <button key={item.id} type="button" aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>)}
+              </nav>
+              <span className="updated-label">{dashboard.last_run ? `Updated ${formatDate(dashboard.last_run.finished_at || dashboard.last_run.requested_at)}` : 'No collection yet'}</span>
+            </div>
+
+            {view === 'overview' && <div className="view-content">
+              <section className="metrics-strip" aria-label="Key metrics" data-reveal>
+                {metrics.map((metric, index) => {
+                  const Icon = metricIcons[index]
+                  return <article className="metric-item" key={metric.label}>
                     <div className="metric-label"><Icon /><span>{metric.label}</span></div>
-                    <strong>{formatNumber(metric.value)}</strong>
-                    <small>{metric.note}</small>
+                    <strong>{formatNumber(metric.value)}</strong><small>{metric.note}</small>
                   </article>
-                )
-              })}
-            </section>
-
-            <div className="analytics-grid">
-              <section className="panel ai-summary-panel">
-                <div className="panel-heading">
-                  <div><h2>AI Summary</h2><p>Key findings from collected posts.</p></div>
-                  <span className={`ai-status ${dashboard.ai_analysis?.status ?? 'idle'}`}><MagicWand />{dashboard.ai_analysis?.status === 'succeeded' ? 'Completed' : dashboard.ai_analysis?.status === 'failed' ? 'Failed' : dashboard.ai_analysis?.status === 'queued' || dashboard.ai_analysis?.status === 'running' ? 'Analyzing…' : 'Not Analyzed'}</span>
-                </div>
-                {dashboard.ai_analysis?.status === 'succeeded' ? (
-                  <div className="ai-summary-content">
-                    <p className="ai-summary-lead">{dashboard.ai_analysis.summary}</p>
-                    <div className="ai-sentiment-insights">
-                      <article className="positive"><span>Positive Themes</span><p>{dashboard.ai_analysis.positive_summary}</p></article>
-                      <article className="negative"><span>Negative Themes</span><p>{dashboard.ai_analysis.negative_summary}</p></article>
-                    </div>
-                    <div className="ai-topics"><span>Key Topics</span><div>{dashboard.ai_analysis.key_topics.map((topic) => <b key={topic}>{topic}</b>)}</div></div>
-                    <small>Analyzed with {dashboard.ai_analysis.model} · {formatDate(dashboard.ai_analysis.analyzed_at, true)}</small>
+                })}
+              </section>
+              <div className="analytics-grid" data-reveal>
+                <section className="panel ai-summary-panel">
+                  <div className="panel-heading">
+                    <div><h2>What people are saying</h2><p>An AI brief from up to 10 high-engagement posts.</p></div>
+                    <button className="text-button" type="button" onClick={openAIAnalysis} disabled={activeAIId === selectedTopic.id || !dashboard.summary.mentions}><MagicWand />{activeAIId === selectedTopic.id ? 'Analyzing…' : dashboard.ai_analysis?.status === 'succeeded' ? 'Refresh' : 'Generate Summary'}</button>
                   </div>
-                ) : dashboard.ai_analysis?.status === 'queued' || dashboard.ai_analysis?.status === 'running' ? (
-                  <div className="ai-summary-empty working"><MagicWand /><strong>Analysis in Progress</strong><p>The summary will appear when analysis is complete.</p></div>
-                ) : dashboard.ai_analysis?.status === 'failed' ? (
-                  <div className="ai-summary-empty failed"><WarningCircle /><strong>Analysis Failed</strong><p>{dashboard.ai_analysis.error}</p><button className="secondary-button" type="button" onClick={openAIAnalysis}>Retry Analysis</button></div>
-                ) : (
-                  <div className="ai-summary-empty"><MagicWand /><strong>No Analysis Yet</strong><p>Analyze collected posts to identify key themes and summarize the conversation.</p><button className="secondary-button" type="button" onClick={openAIAnalysis}>Analyze Posts</button></div>
-                )}
-              </section>
-              <section className="panel sentiment-panel">
-                <div className="panel-heading"><div><h2>Sentiment Overview</h2><p>Rule-based sentiment across collected posts.</p></div></div>
-                <SentimentChart values={dashboard.sentiment} />
-              </section>
-            </div>
-
-            <section className="top-conversations-section">
-              <div className="section-heading"><div><h2>Top Posts</h2><p>Posts ranked by public engagement metrics on X.</p></div></div>
-              <div className="top-conversation-grid">
-                {topConversations.map(({ label, note, post, Icon, value }) => (
-                  <article className="top-conversation-card" key={label}>
-                    <header><span><Icon />{label}</span><b>{formatNumber(value)}</b></header>
-                    {post ? <><p>{post.text}</p><footer><span>@{post.author_username}</span><small>{note}</small><a href={post.url} target="_blank" rel="noreferrer" aria-label={`View ${label} on X`}><ArrowSquareOut /></a></footer></> : <div className="compact-empty">No posts collected.</div>}
-                  </article>
-                ))}
+                  {dashboard.ai_analysis?.status === 'succeeded' ? <div className="ai-summary-content">
+                    <p className="ai-summary-lead">{dashboard.ai_analysis.summary}</p>
+                    <details className="disclosure">
+                      <summary>Themes & source details</summary>
+                      <div className="ai-sentiment-insights">
+                        <article><span>Positive themes</span><p>{dashboard.ai_analysis.positive_summary}</p></article>
+                        <article><span>Negative themes</span><p>{dashboard.ai_analysis.negative_summary}</p></article>
+                      </div>
+                      <div className="ai-topics">{dashboard.ai_analysis.key_topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
+                      <p className="method-note">Generated {formatDate(dashboard.ai_analysis.analyzed_at, true)} with {dashboard.ai_analysis.model}. This summary covers a selected sample, not every post.</p>
+                    </details>
+                  </div> : <div className="ai-summary-empty">
+                    <p>{dashboard.ai_analysis?.status === 'failed' ? dashboard.ai_analysis.error : activeAIId === selectedTopic.id ? 'Your summary is being prepared.' : 'Generate a summary to see the main themes in this conversation.'}</p>
+                  </div>}
+                </section>
+                <section className="panel sentiment-panel">
+                  <div className="panel-heading"><div><h2>Conversation tone</h2><p>Estimated sentiment from collected posts.</p></div></div>
+                  <SentimentChart values={dashboard.sentiment} />
+                </section>
               </div>
-            </section>
-
-            {insightsError ? (
-              <div className="inline-alert error" role="alert"><WarningCircle /><span>{insightsError}</span><button className="secondary-button" type="button" onClick={() => selectedTopic && void loadInsights(selectedTopic.id)}>Retry</button></div>
-            ) : insights && insights.topic_id === selectedTopic.id ? (
-              <div className={`insights-stack${insightsLoading ? ' refreshing' : ''}`}>
-                {insights.posts_analyzed < insights.posts_total && (
-                  <p className="method-note">Network insights use the latest {formatCount(insights.posts_analyzed, 'post')} of {formatNumber(insights.posts_total)}. Regional totals include all collected posts.</p>
-                )}
-                <GeoPanel data={insights.geo} />
-                <NetworkPanel data={insights.network} />
-              </div>
-            ) : insightsLoading ? <InsightsSkeleton /> : null}
-
-            <div className="insight-grid">
-              <section className="panel author-panel">
-                <div className="panel-heading"><div><h2>Top Authors</h2><p>Ranked by total engagement.</p></div></div>
-                <div className="author-list">
-                  {dashboard.top_authors.length ? dashboard.top_authors.map((author) => (
-                    <div className="author-row" key={author.author_username}>
-                      <Avatar name={author.author_name} source={author.author_avatar} />
-                      <div><strong>{author.author_name}</strong><span>@{author.author_username} · {formatCount(author.followers, 'follower')}</span></div>
-                      <b>{formatNumber(author.engagement)}<small>engagement</small></b>
-                    </div>
-                  )) : <EmptyCompact text="No authors to display." />}
+              {featuredPost && <section className="panel featured-post" data-reveal>
+                <div className="panel-heading"><div><h2>Most engaged post</h2><p>The post with the most likes, reposts, replies and quotes.</p></div><a className="text-button" href={featuredPost.url} target="_blank" rel="noreferrer">View on X<ArrowSquareOut /></a></div>
+                <p>{featuredPost.text}</p>
+                <footer><span>@{featuredPost.author_username}</span><strong>{formatNumber(featuredPost.like_count + featuredPost.retweet_count + featuredPost.reply_count + featuredPost.quote_count)} interactions</strong></footer>
+              </section>}
+              <details className="disclosure collection-details">
+                <summary>Collection details</summary>
+                <div className="insight-grid">
+                  <section><h3>Top authors by engagement</h3><div className="author-list">
+                    {dashboard.top_authors.length ? dashboard.top_authors.map((author) => <div className="author-row" key={author.author_username}><Avatar name={author.author_name} source={author.author_avatar} /><div><strong>{author.author_name}</strong><span>@{author.author_username}</span></div><b>{formatNumber(author.engagement)}</b></div>) : <EmptyCompact text="No authors yet." />}
+                  </div></section>
+                  <section><h3>Hashtags in recent posts</h3><div className="hashtag-cloud">{dashboard.hashtags.length ? dashboard.hashtags.map((item) => <span key={item.tag}>#{item.tag}<b>{formatNumber(item.count)}</b></span>) : <EmptyCompact text="No hashtags found." />}</div></section>
+                  <section><h3>Latest collection</h3>{dashboard.last_run ? <dl className="run-facts">
+                    <div><dt>Status</dt><dd>{runLabels[dashboard.last_run.status]}</dd></div>
+                    <div><dt>Received</dt><dd>{formatNumber(dashboard.last_run.items_received)}</dd></div>
+                    <div><dt>New posts</dt><dd>{formatNumber(dashboard.last_run.items_new)}</dd></div>
+                    <div><dt>Combined followers</dt><dd>{formatNumber(dashboard.summary.audience)}</dd></div>
+                  </dl> : <EmptyCompact text="No collection history." />}</section>
                 </div>
-              </section>
+              </details>
+            </div>}
 
-              <section className="panel hashtag-panel">
-                <div className="panel-heading"><div><h2>Related Hashtags</h2><p>Hashtags found in collected posts.</p></div></div>
-                {dashboard.hashtags.length ? (
-                  <div className="hashtag-cloud">{dashboard.hashtags.map((item) => <span key={item.tag}><Hash />{item.tag}<b>{formatNumber(item.count)}</b></span>)}</div>
-                ) : <EmptyCompact text="No hashtags found." />}
-              </section>
+            {(view === 'regions' || view === 'network') && <div className="view-content" data-reveal>
+              {insightsError ? <div className="inline-alert error" role="alert"><WarningCircle /><span>{insightsError}</span><button className="secondary-button" type="button" onClick={() => void loadInsights(selectedTopic.id)}>Retry</button></div>
+                : insights && insights.topic_id === selectedTopic.id ? <>
+                  {view === 'network' && insights.posts_analyzed < insights.posts_total && <p className="method-note">Network analysis covers the latest {formatCount(insights.posts_analyzed, 'post')} of {formatNumber(insights.posts_total)}.</p>}
+                  {view === 'regions' ? <GeoPanel key={selectedTopic.id} data={insights.geo} /> : <NetworkPanel key={selectedTopic.id} data={insights.network} />}
+                  {insightsLoading && <p className="method-note" role="status">Refreshing insights…</p>}
+                </> : <InsightsSkeleton />}
+            </div>}
 
-              <section className="panel quality-panel">
-                <div className="panel-heading"><div><h2>Latest Collection</h2><p>Status and results of the latest collection.</p></div></div>
-                {dashboard.last_run ? (
-                  <dl className="run-facts">
-                    <div><dt>Status</dt><dd className={`run-status ${dashboard.last_run.status}`}>{runLabels[dashboard.last_run.status]}</dd></div>
-                    <div><dt>Updated</dt><dd>{formatDate(dashboard.last_run.finished_at || dashboard.last_run.requested_at, true)}</dd></div>
-                    <div><dt>Received</dt><dd>{formatCount(dashboard.last_run.items_received, 'post')}</dd></div>
-                    <div><dt>New Posts</dt><dd>{formatCount(dashboard.last_run.items_new, 'post')}</dd></div>
-                  </dl>
-                ) : <EmptyCompact text="No collection history." />}
-              </section>
-            </div>
-
-            <section className="conversation-panel">
+            {view === 'posts' && <section className="panel conversation-panel" data-reveal>
               <div className="conversation-header">
-                <div><h2>Recent Posts</h2><p>Sorted by publication date. View each post on X for its original context.</p></div>
+                <div><h2>Explore the posts</h2><p>Filters apply to the latest {formatCount(dashboard.posts.length, 'post')}. Export CSV includes all collected posts.</p></div>
                 <div className="filter-group">
-                  <label className="filter-field"><span>Region Filter</span><select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)}><option value="all">All Regions</option>{postRegions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}<option value="unknown">No Province</option></select></label>
-                  <label className="filter-field"><span>Sentiment Filter</span><select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value as SentimentFilter)}><option value="all">All</option><option value="positive">Positive</option><option value="neutral">Neutral</option><option value="negative">Negative</option></select></label>
+                  <label className="filter-field"><span>Region</span><select aria-label="Region" value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)}><option value="all">All regions</option>{postRegions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}<option value="unknown">No province identified</option></select></label>
+                  <label className="filter-field"><span>Sentiment</span><select aria-label="Sentiment" value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value as SentimentFilter)}><option value="all">All sentiments</option><option value="positive">Positive</option><option value="neutral">Neutral</option><option value="negative">Negative</option></select></label>
                 </div>
               </div>
               <div className="conversation-list">
-                {filteredPosts.length ? filteredPosts.map((post) => <ConversationRow key={post.tweet_id} post={post} />) : <EmptyCompact text="No posts match this filter." />}
+                {filteredPosts.length ? filteredPosts.map((post) => <ConversationRow key={post.tweet_id} post={post} />) : <EmptyCompact text="No posts match these filters." />}
               </div>
-            </section>
+            </section>}
           </div>
         ) : null}
       </main>
@@ -724,30 +713,30 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
         </Modal>
       )}
     </div>
+    </IconContext.Provider>
   )
 }
 
 function ConversationRow({ post }: { post: Post }) {
-  return (
-    <article className="conversation-row">
-      <div className="conversation-author">
-        <Avatar name={post.author_name} source={post.author_avatar} large />
-        <div><strong>{post.author_name}{post.author_verified && <SealCheck className="verified" aria-label="Verified" />}</strong><span>@{post.author_username}</span><small>{formatCount(post.author_followers, 'follower')}</small><small className="post-region" title={`Source: ${sourceLabels[post.region_source ?? ''] ?? 'unavailable'}. Profile: ${post.author_location || 'unavailable'}`}><MapPin aria-hidden />{post.region || 'Location unavailable'}</small></div>
+  return <article className="conversation-row">
+    <header className="conversation-author">
+      <Avatar name={post.author_name} source={post.author_avatar} />
+      <div><strong>{post.author_name}{post.author_verified && <SealCheck className="verified" aria-label="Verified" />}</strong><span>@{post.author_username}</span></div>
+      <time>{formatDate(post.created_at, true)}</time>
+    </header>
+    <p className="post-text">{post.text}</p>
+    <div className="post-meta"><span className={`sentiment-badge ${post.sentiment}`}>{sentimentLabels[post.sentiment]}</span><span className="post-region" title={`Source: ${sourceLabels[post.region_source ?? ''] ?? 'unavailable'}. Profile: ${post.author_location || 'unavailable'}`}><MapPin aria-hidden />{post.region || 'Location unavailable'}</span></div>
+    <footer className="conversation-stats">
+      <span title="Likes" aria-label={`${post.like_count} likes`}><Heart />{formatNumber(post.like_count)}</span>
+      <span title="Reposts" aria-label={`${post.retweet_count} reposts`}><Repeat />{formatNumber(post.retweet_count)}</span>
+      <span title="Replies" aria-label={`${post.reply_count} replies`}><ChatCircle />{formatNumber(post.reply_count)}</span>
+      <span title="Views" aria-label={`${post.view_count} views`}><Eye />{formatNumber(post.view_count)}</span>
+      <div className="conversation-actions">
+        {/^\d+$/.test(post.conversation_id) && post.conversation_id !== post.tweet_id && <a href={`https://x.com/i/status/${post.conversation_id}`} target="_blank" rel="noreferrer">View Thread</a>}
+        <a href={post.url} target="_blank" rel="noreferrer">View Post<ArrowSquareOut /></a>
       </div>
-      <div className="conversation-copy">
-        <p>{post.text}</p>
-        <div><span className={`sentiment-badge ${post.sentiment}`}>{sentimentLabels[post.sentiment]}</span><time>{formatDate(post.created_at, true)}</time>{post.hashtags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}</div>
-        {/^\d+$/.test(post.conversation_id) && <a href={`https://x.com/i/status/${post.conversation_id}`} target="_blank" rel="noreferrer">View Thread<ArrowSquareOut aria-hidden /></a>}
-      </div>
-      <div className="conversation-stats">
-        <span><Heart />{formatNumber(post.like_count)}</span>
-        <span><Repeat />{formatNumber(post.retweet_count)}</span>
-        <span><ChatCircle />{formatNumber(post.reply_count)}</span>
-        <span><Eye />{formatNumber(post.view_count)}</span>
-        <div className="conversation-actions"><a href={post.url} target="_blank" rel="noreferrer">View on X<ArrowSquareOut /></a></div>
-      </div>
-    </article>
-  )
+    </footer>
+  </article>
 }
 
 function EmptyCompact({ text }: { text: string }) {
