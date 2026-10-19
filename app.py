@@ -33,6 +33,8 @@ from apify_api import (
     load_env_file,
     require_token,
 )
+import geo
+import network
 
 
 ROOT = Path(__file__).resolve().parent
@@ -43,6 +45,29 @@ UI_URL = os.environ.get("SINYALX_UI_URL", "http://127.0.0.1:3000")
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 GEMINI_SUMMARY_LIMIT = 10
+# Most recent posts included in network analysis; regional totals include all posts.
+INSIGHTS_POST_LIMIT = 3000
+# Bump when post_details() extracts new fields so stored posts are re-derived from raw_json.
+DETAILS_VERSION = 2
+DETAIL_COLUMNS = {
+    "author_id": "TEXT NOT NULL DEFAULT ''",
+    "conversation_id": "TEXT NOT NULL DEFAULT ''",
+    "reply_to_post_id": "TEXT NOT NULL DEFAULT ''",
+    "reply_to_user_id": "TEXT NOT NULL DEFAULT ''",
+    "quoted_post_id": "TEXT NOT NULL DEFAULT ''",
+    "retweeted_post_id": "TEXT NOT NULL DEFAULT ''",
+    "post_coordinates_json": "TEXT NOT NULL DEFAULT '{}'",
+    "place_json": "TEXT NOT NULL DEFAULT '{}'",
+    "author_location": "TEXT NOT NULL DEFAULT ''",
+    "author_verified": "INTEGER NOT NULL DEFAULT 0",
+    "place_name": "TEXT NOT NULL DEFAULT ''",
+    "place_country": "TEXT NOT NULL DEFAULT ''",
+    "reply_to": "TEXT NOT NULL DEFAULT ''",
+    "quoted_user": "TEXT NOT NULL DEFAULT ''",
+    "retweeted_user": "TEXT NOT NULL DEFAULT ''",
+    "mentions_json": "TEXT NOT NULL DEFAULT '[]'",
+    "details_version": "INTEGER NOT NULL DEFAULT 0",
+}
 POSITIVE_WORDS = {
     "bagus", "baik", "bangga", "berhasil", "cinta", "hebat", "keren", "mantap",
     "menarik", "mudah", "puas", "senang", "solusi", "suka", "terbaik", "untung",
@@ -157,6 +182,81 @@ def init_db() -> None:
         post_columns = db.columns("posts")
         if "sentiment_source" not in post_columns:
             db.execute("ALTER TABLE posts ADD COLUMN sentiment_source TEXT NOT NULL DEFAULT 'lexicon'")
+        for column, definition in DETAIL_COLUMNS.items():
+            if column not in post_columns:
+                db.execute(f"ALTER TABLE posts ADD COLUMN {column} {definition}")
+        if "raw_json" in post_columns:
+            backfill_post_details(db)
+
+
+def backfill_post_details(db, batch_size: int = 500) -> int:
+    """Derive location and interaction columns for posts stored before they existed."""
+    updated = 0
+    while True:
+        rows = db.execute(
+            "SELECT id, raw_json FROM posts WHERE details_version < ? AND raw_json <> '{}' "
+            "ORDER BY id LIMIT ?",
+            (DETAILS_VERSION, batch_size),
+        ).fetchall()
+        if not rows:
+            return updated
+        for row in rows:
+            try:
+                item = json.loads(row["raw_json"])
+            except (TypeError, json.JSONDecodeError):
+                item = {}
+            details = post_details(item if isinstance(item, dict) else {})
+            assignments = ", ".join(f"{column} = ?" for column in details)
+            db.execute(f"UPDATE posts SET {assignments} WHERE id = ?", [*details.values(), row["id"]])
+            updated += 1
+
+
+def post_details(item: dict[str, Any]) -> dict[str, Any]:
+    """Location and account-interaction fields from an Apify tweet item."""
+    author = item.get("author") if isinstance(item.get("author"), dict) else {}
+    place = item.get("place") if isinstance(item.get("place"), dict) else {}
+    entities = item.get("entities") if isinstance(item.get("entities"), dict) else {}
+    quoted = item.get("quoted_tweet") if isinstance(item.get("quoted_tweet"), dict) else {}
+    retweeted = item.get("retweeted_tweet") if isinstance(item.get("retweeted_tweet"), dict) else {}
+
+    def username_of(value: Any) -> str:
+        if not isinstance(value, dict):
+            return ""
+        nested = value.get("author") if isinstance(value.get("author"), dict) else {}
+        return str(nested.get("userName") or nested.get("username") or "").lstrip("@")
+
+    mentions = []
+    seen = set()
+    for mention in entities.get("user_mentions") or []:
+        if not isinstance(mention, dict):
+            continue
+        handle = str(mention.get("screen_name") or mention.get("username") or "").lstrip("@")
+        if handle and handle.lower() not in seen:
+            seen.add(handle.lower())
+            mentions.append({"username": handle, "name": str(mention.get("name") or handle),
+                             "id": str(mention.get("id_str") or mention.get("id") or "")})
+    reply_to = str(item.get("inReplyToUsername") or "").lstrip("@") if item.get("isReply") or item.get(
+        "inReplyToId") else ""
+    return {
+        "author_id": str(author.get("id") or ""),
+        "conversation_id": str(item.get("conversationId") or ""),
+        "reply_to_post_id": str(item.get("inReplyToId") or ""),
+        "reply_to_user_id": str(item.get("inReplyToUserId") or ""),
+        "quoted_post_id": str(quoted.get("id") or quoted.get("tweetId") or ""),
+        "retweeted_post_id": str(retweeted.get("id") or retweeted.get("tweetId") or ""),
+        "post_coordinates_json": json.dumps({key: item[key] for key in ("coordinates", "geo")
+                                             if isinstance(item.get(key), dict)}, ensure_ascii=False),
+        "place_json": json.dumps(place, ensure_ascii=False),
+        "author_location": str(author.get("location") or "").strip()[:200],
+        "author_verified": int(bool(author.get("isBlueVerified") or author.get("isVerified"))),
+        "place_name": str(place.get("full_name") or place.get("fullName") or place.get("name") or "")[:200],
+        "place_country": str(place.get("country_code") or place.get("countryCode") or "")[:8],
+        "reply_to": reply_to,
+        "quoted_user": username_of(item.get("quoted_tweet")),
+        "retweeted_user": username_of(item.get("retweeted_tweet")),
+        "mentions_json": json.dumps(mentions, ensure_ascii=False),
+        "details_version": DETAILS_VERSION,
+    }
 
 
 def parse_created_at(value: Any) -> str:
@@ -445,6 +545,7 @@ def normalize_tweet(item: dict[str, Any]) -> dict[str, Any] | None:
         "hashtags_json": json.dumps(hashtags, ensure_ascii=False),
         "raw_json": json.dumps(item, ensure_ascii=False),
         "collected_at": utc_now(),
+        **post_details(item),
     }
 
 
@@ -653,6 +754,8 @@ def dashboard_data(topic_id: int) -> dict[str, Any] | None:
             SELECT tweet_id, url, text, created_at, author_name, author_username,
                    author_avatar, author_followers, language, like_count, retweet_count,
                    reply_count, quote_count, view_count, sentiment, sentiment_source,
+                   author_location, author_verified, place_name, place_country,
+                   author_id, conversation_id, reply_to_post_id,
                    hashtags_json
             FROM posts WHERE topic_id = ? ORDER BY created_at DESC LIMIT 50
             """,
@@ -671,6 +774,8 @@ def dashboard_data(topic_id: int) -> dict[str, Any] | None:
                 SELECT tweet_id, url, text, created_at, author_name, author_username,
                        author_avatar, author_followers, language, like_count, retweet_count,
                        reply_count, quote_count, view_count, sentiment, sentiment_source,
+                   author_location, author_verified, place_name, place_country,
+                       author_id, conversation_id, reply_to_post_id,
                        hashtags_json
                 FROM posts WHERE topic_id = ? ORDER BY {order_clause} LIMIT 1
                 """,
@@ -689,6 +794,14 @@ def dashboard_data(topic_id: int) -> dict[str, Any] | None:
         post = dict(row)
         hashtags = json.loads(post.pop("hashtags_json") or "[]")
         post["hashtags"] = hashtags
+        location = geo.post_location(post)
+        post["region"] = location.label or None
+        post["province_code"] = location.province_code
+        post["region_source"] = location.source
+        post["region_resolution"] = location.kind
+        post["author_verified"] = bool(post.get("author_verified"))
+        post.pop("place_name", None)
+        post.pop("place_country", None)
         return post
 
     hashtag_counts: Counter[str] = Counter()
@@ -717,6 +830,33 @@ def dashboard_data(topic_id: int) -> dict[str, Any] | None:
         "ai_analysis": ai_analysis,
         "posts": posts,
         "last_run": dict(run_row) if run_row else None,
+    }
+
+
+def insights_data(topic_id: int) -> dict[str, Any] | None:
+    """Regional distribution and social network analysis for a topic."""
+    with connect_db() as db:
+        topic = db.execute("SELECT id FROM topics WHERE id = ? AND is_demo = 0", (topic_id,)).fetchone()
+        if topic is None:
+            return None
+        total = db.execute("SELECT COUNT(*) AS count FROM posts WHERE topic_id = ?", (topic_id,)).fetchone()["count"]
+        rows = db.execute(
+            """
+            SELECT tweet_id, text, created_at, author_name, author_username, author_avatar,
+                   author_followers, author_verified, author_location, place_name, place_country,
+                   like_count, retweet_count, reply_count, quote_count, view_count, sentiment,
+                   hashtags_json, reply_to, quoted_user, retweeted_user, mentions_json, conversation_id
+            FROM posts WHERE topic_id = ? ORDER BY created_at DESC, tweet_id DESC
+            """,
+            (topic_id,),
+        ).fetchall()
+    posts = [dict(row) for row in rows]
+    return {
+        "topic_id": topic_id,
+        "posts_analyzed": min(len(posts), INSIGHTS_POST_LIMIT),
+        "posts_total": int(total),
+        "geo": geo.summarize_regions(posts),
+        "network": network.analyze_network(posts[:INSIGHTS_POST_LIMIT]),
     }
 
 
@@ -803,6 +943,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/topics/(\d+)/dashboard", path)
         if match:
             data = dashboard_data(int(match.group(1)))
+            if data is None:
+                self.send_json({"error": "Topic not found."}, HTTPStatus.NOT_FOUND)
+            else:
+                self.send_json(data)
+            return
+
+        match = re.fullmatch(r"/api/topics/(\d+)/insights", path)
+        if match:
+            data = insights_data(int(match.group(1)))
             if data is None:
                 self.send_json({"error": "Topic not found."}, HTTPStatus.NOT_FOUND)
             else:
@@ -1040,22 +1189,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def send_csv_export(self, topic_id: int) -> None:
         with connect_db() as db:
             topic = db.execute("SELECT name FROM topics WHERE id = ?", (topic_id,)).fetchone()
-            rows = db.execute(
+            cursor = db.execute(
                 """
                 SELECT tweet_id, created_at, author_name, author_username, text, sentiment,
-                       like_count, retweet_count, reply_count, quote_count, view_count, url
+                       like_count, retweet_count, reply_count, quote_count, view_count, url,
+                       author_location, place_name, place_country, reply_to, quoted_user,
+                       retweeted_user, mentions_json, author_id, author_followers, author_verified,
+                       language, collected_at, conversation_id, reply_to_post_id, reply_to_user_id,
+                       quoted_post_id, retweeted_post_id, hashtags_json, post_coordinates_json,
+                       place_json, raw_json
                 FROM posts WHERE topic_id = ? ORDER BY created_at DESC
                 """,
                 (topic_id,),
-            ).fetchall()
+            )
+            fields = [column[0] for column in cursor.description]
+            rows = cursor.fetchall()
         if topic is None:
             self.send_json({"error": "Topic not found."}, HTTPStatus.NOT_FOUND)
             return
+        export_rows = []
+        for row in rows:
+            record = dict(row)
+            location = geo.post_location(record)
+            mentions = network.load_list(record["mentions_json"])
+            record["mentions"] = " ".join(
+                "@" + str(item.get("username") if isinstance(item, dict) else item) for item in mentions
+            )
+            record["region_province"] = location.province or ""
+            record["region_city"] = location.city or ""
+            record["region_country"] = location.country or ""
+            record["region_source"] = location.source or ""
+            record["region_resolution"] = location.kind
+            # Spreadsheet apps can execute formulas in untrusted profile and post text.
+            record = {key: "'" + value if isinstance(value, str) and value.lstrip().startswith(
+                ("=", "+", "-", "@")) else value for key, value in record.items()}
+            export_rows.append(record)
         stream = io.StringIO()
-        fields = list(rows[0].keys()) if rows else ["tweet_id", "created_at", "text"]
+        fields += ["mentions", "region_province", "region_city", "region_country", "region_source", "region_resolution"]
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(dict(row) for row in rows)
+        writer.writerows(export_rows)
         body = ("\ufeff" + stream.getvalue()).encode("utf-8")
         safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "-", topic["name"]).strip("-") or "topic"
         self.send_response(HTTPStatus.OK)

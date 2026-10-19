@@ -31,8 +31,12 @@ export function formatDate(value: string | null | undefined, includeTime = false
   }).format(date)
 }
 
-export function formatCount(value: number, noun: 'post' | 'follower') {
+export function formatCount(value: number, noun: 'post' | 'follower' | 'account' | 'interaction' | 'thread') {
   return `${formatNumber(value)} ${noun}${value === 1 ? '' : 's'}`
+}
+
+export function formatPercent(value: number, digits = 0) {
+  return `${(Number(value || 0) * 100).toFixed(digits)}%`
 }
 
 export function initials(name: string) {

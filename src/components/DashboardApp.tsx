@@ -13,10 +13,12 @@ import {
   Heart,
   List,
   MagicWand,
+  MapPin,
   Moon,
   Plus,
   Pulse,
   Repeat,
+  SealCheck,
   Sun,
   Trash,
   Users,
@@ -24,8 +26,9 @@ import {
   X,
 } from '@phosphor-icons/react'
 import type { FormEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SentimentChart } from './Charts'
+import { GeoPanel, InsightsSkeleton, NetworkPanel, sourceLabels } from './Insights'
 import { formatCount, formatDate, formatNumber, initials, runLabels, sentimentLabels } from '../lib/format'
 import {
   analyzeTopic,
@@ -36,11 +39,13 @@ import {
   exportTopic,
   getArchivedTopics,
   getDashboard,
+  getInsights,
   getRun,
   getTopics,
   restoreTopic,
   type Bootstrap,
   type DashboardData,
+  type Insights,
   type Post,
   type Topic,
   type TopicInput,
@@ -90,9 +95,14 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
   const [mobileNav, setMobileNav] = useState(false)
   const [theme, setTheme] = useState<Theme>('dark')
   const [sentimentFilter, setSentimentFilter] = useState<SentimentFilter>('all')
+  const [regionFilter, setRegionFilter] = useState<string>('all')
   const [notice, setNotice] = useState<Notice>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [insights, setInsights] = useState<Insights | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsError, setInsightsError] = useState<string | null>(null)
+  const insightsRequest = useRef(0)
 
   const selectedTopic = topics.find((topic) => topic.id === selectedId) ?? null
 
@@ -123,9 +133,28 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
       .catch(() => setArchivedTopics([]))
   }, [])
 
+  const loadInsights = useCallback(async (topicId: number) => {
+    // Ignore responses for a topic the user has already left.
+    const request = ++insightsRequest.current
+    setInsightsLoading(true)
+    setInsightsError(null)
+    try {
+      const next = await getInsights({ data: topicId })
+      if (request === insightsRequest.current) setInsights(next)
+    } catch (error) {
+      if (request === insightsRequest.current) {
+        setInsights(null)
+        setInsightsError(error instanceof Error ? error.message : 'Unable to load regional and network insights.')
+      }
+    } finally {
+      if (request === insightsRequest.current) setInsightsLoading(false)
+    }
+  }, [])
+
   const loadDashboard = useCallback(async (topicId: number) => {
     setLoading(true)
     setPageError(null)
+    void loadInsights(topicId)
     try {
       const next = await getDashboard({ data: topicId })
       setDashboard(next)
@@ -141,14 +170,17 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loadInsights])
 
   useEffect(() => {
     if (selectedId === null) {
       setDashboard(null)
+      setInsights(null)
       setLoading(false)
       return
     }
+    setInsights((current) => current?.topic_id === selectedId ? current : null)
+    setRegionFilter('all')
     void loadDashboard(selectedId)
   }, [loadDashboard, selectedId])
 
@@ -257,10 +289,17 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
 
   const filteredPosts = useMemo(() => {
     const posts = dashboard?.posts ?? []
-    return sentimentFilter === 'all'
-      ? posts
-      : posts.filter((post) => post.sentiment === sentimentFilter)
-  }, [dashboard, sentimentFilter])
+    return posts.filter((post) => (sentimentFilter === 'all' || post.sentiment === sentimentFilter)
+      && (regionFilter === 'all' || (regionFilter === 'unknown' ? !post.province_code : post.province_code === regionFilter)))
+  }, [dashboard, sentimentFilter, regionFilter])
+
+  const postRegions = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const post of dashboard?.posts ?? []) {
+      if (post.province_code && post.region) names.set(post.province_code, post.region.split(', ').pop() ?? post.region)
+    }
+    return [...names.entries()].sort((left, right) => left[1].localeCompare(right[1]))
+  }, [dashboard])
 
   async function handleCreateTopic(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -560,6 +599,18 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
               </div>
             </section>
 
+            {insightsError ? (
+              <div className="inline-alert error" role="alert"><WarningCircle /><span>{insightsError}</span><button className="secondary-button" type="button" onClick={() => selectedTopic && void loadInsights(selectedTopic.id)}>Retry</button></div>
+            ) : insights && insights.topic_id === selectedTopic.id ? (
+              <div className={`insights-stack${insightsLoading ? ' refreshing' : ''}`}>
+                {insights.posts_analyzed < insights.posts_total && (
+                  <p className="method-note">Network insights use the latest {formatCount(insights.posts_analyzed, 'post')} of {formatNumber(insights.posts_total)}. Regional totals include all collected posts.</p>
+                )}
+                <GeoPanel data={insights.geo} />
+                <NetworkPanel data={insights.network} />
+              </div>
+            ) : insightsLoading ? <InsightsSkeleton /> : null}
+
             <div className="insight-grid">
               <section className="panel author-panel">
                 <div className="panel-heading"><div><h2>Top Authors</h2><p>Ranked by total engagement.</p></div></div>
@@ -597,7 +648,10 @@ export function DashboardApp({ initial }: { initial: Bootstrap }) {
             <section className="conversation-panel">
               <div className="conversation-header">
                 <div><h2>Recent Posts</h2><p>Sorted by publication date. View each post on X for its original context.</p></div>
-                <label className="filter-field"><span>Sentiment Filter</span><select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value as SentimentFilter)}><option value="all">All</option><option value="positive">Positive</option><option value="neutral">Neutral</option><option value="negative">Negative</option></select></label>
+                <div className="filter-group">
+                  <label className="filter-field"><span>Region Filter</span><select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)}><option value="all">All Regions</option>{postRegions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}<option value="unknown">No Province</option></select></label>
+                  <label className="filter-field"><span>Sentiment Filter</span><select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value as SentimentFilter)}><option value="all">All</option><option value="positive">Positive</option><option value="neutral">Neutral</option><option value="negative">Negative</option></select></label>
+                </div>
               </div>
               <div className="conversation-list">
                 {filteredPosts.length ? filteredPosts.map((post) => <ConversationRow key={post.tweet_id} post={post} />) : <EmptyCompact text="No posts match this filter." />}
@@ -678,11 +732,12 @@ function ConversationRow({ post }: { post: Post }) {
     <article className="conversation-row">
       <div className="conversation-author">
         <Avatar name={post.author_name} source={post.author_avatar} large />
-        <div><strong>{post.author_name}</strong><span>@{post.author_username}</span><small>{formatCount(post.author_followers, 'follower')}</small></div>
+        <div><strong>{post.author_name}{post.author_verified && <SealCheck className="verified" aria-label="Verified" />}</strong><span>@{post.author_username}</span><small>{formatCount(post.author_followers, 'follower')}</small><small className="post-region" title={`Source: ${sourceLabels[post.region_source ?? ''] ?? 'unavailable'}. Profile: ${post.author_location || 'unavailable'}`}><MapPin aria-hidden />{post.region || 'Location unavailable'}</small></div>
       </div>
       <div className="conversation-copy">
         <p>{post.text}</p>
         <div><span className={`sentiment-badge ${post.sentiment}`}>{sentimentLabels[post.sentiment]}</span><time>{formatDate(post.created_at, true)}</time>{post.hashtags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}</div>
+        {/^\d+$/.test(post.conversation_id) && <a href={`https://x.com/i/status/${post.conversation_id}`} target="_blank" rel="noreferrer">View Thread<ArrowSquareOut aria-hidden /></a>}
       </div>
       <div className="conversation-stats">
         <span><Heart />{formatNumber(post.like_count)}</span>

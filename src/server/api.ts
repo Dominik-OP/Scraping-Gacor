@@ -51,6 +51,153 @@ export type Post = {
   sentiment: 'positive' | 'neutral' | 'negative'
   sentiment_source: 'gemini' | 'lexicon'
   hashtags: string[]
+  author_location: string
+  author_id: string
+  conversation_id: string
+  reply_to_post_id: string
+  author_verified: boolean
+  region: string | null
+  region_source: string | null
+  region_resolution: string
+  province_code: string | null
+}
+
+export type SentimentCounts = { positive: number; neutral: number; negative: number }
+
+export type ProvinceRegion = {
+  code: string
+  name: string
+  col: number
+  row: number
+  posts: number
+  authors: number
+  threads: number
+  engagement: number
+  views: number
+  share: number
+  heat: number
+  recent_posts: number
+  trend: 'rising' | 'steady' | 'cooling' | null
+  sentiment: SentimentCounts
+  net_sentiment: number
+  top_hashtags: string[]
+  top_cities: Array<{ name: string; posts: number }>
+  mentioned_in: number
+  mention_heat: number
+}
+
+export type GeoInsights = {
+  coverage: {
+    posts: number
+    province: number
+    country_only: number
+    foreign: number
+    unknown: number
+    located_share: number
+    authors: number
+    authors_located: number
+    threads: number
+    posts_with_thread: number
+    sources: Partial<Record<'place' | 'coordinates' | 'profile' | 'flag', number>>
+  }
+  trend_window: { latest: string | null; recent_hours: number; enabled: boolean; recent_posts: number }
+  provinces: ProvinceRegion[]
+  cities: Array<{
+    name: string
+    province_code: string
+    province: string
+    posts: number
+    authors: number
+    engagement: number
+    net_sentiment: number
+  }>
+  foreign: Array<{ country: string; posts: number }>
+  mentions: Array<{
+    code: string
+    name: string
+    posts: number
+    engagement: number
+    net_sentiment: number
+    top_cities: string[]
+  }>
+}
+
+export type InteractionType = 'reply' | 'mention' | 'quote' | 'retweet'
+export type NetworkRole = 'influencer' | 'bridge' | 'conversation_driver' | 'amplifier' | 'referenced' | 'participant'
+
+export type NetworkActor = {
+  id: string
+  username: string
+  name: string
+  avatar: string
+  followers: number
+  verified: boolean
+  posts: number
+  engagement: number
+  in_degree: number
+  out_degree: number
+  interactions_received: number
+  interactions_sent: number
+  received: Record<InteractionType, number>
+  pagerank: number
+  influence: number
+  betweenness: number
+  community: number | null
+  role: NetworkRole
+  location: string | null
+  province_code: string | null
+}
+
+export type NetworkInsights = {
+  stats: {
+    nodes: number
+    edges: number
+    interactions: number
+    authors: number
+    isolated_authors: number
+    referenced_accounts: number
+    density: number
+    reciprocity: number
+    average_degree: number
+    clustering: number
+    components: number
+    largest_component_share: number
+    communities: number
+    modularity: number
+    centralization: number
+    interaction_types: Record<InteractionType, number>
+    roles: Partial<Record<NetworkRole, number>>
+    betweenness_sampled: boolean
+  }
+  actors: NetworkActor[]
+  brokers: NetworkActor[]
+  communities: Array<{
+    id: number
+    label: string
+    size: number
+    share: number
+    internal_interactions: number
+    authors: number
+    top_members: Array<{ username: string; name: string; influence: number }>
+    top_hashtags: string[]
+    sentiment: SentimentCounts
+    top_region: string | null
+  }>
+  strongest_ties: Array<{ source: string; target: string; count: number; types: Partial<Record<InteractionType, number>> }>
+  hashtag_pairs: Array<{ tags: [string, string]; count: number }>
+  graph: {
+    nodes: Array<NetworkActor & { x: number; y: number }>
+    edges: Array<{ source: string; target: string; weight: number; count: number; type: InteractionType }>
+    truncated: boolean
+  }
+}
+
+export type Insights = {
+  topic_id: number
+  posts_analyzed: number
+  posts_total: number
+  geo: GeoInsights
+  network: NetworkInsights
 }
 
 export type AIAnalysis = {
@@ -175,6 +322,10 @@ export const getArchivedTopics = createServerFn({ method: 'GET' }).handler(async
 export const getDashboard = createServerFn({ method: 'GET' })
   .validator((topicId: number) => topicId)
   .handler(async ({ data }) => backend<DashboardData>(`/api/topics/${data}/dashboard`))
+
+export const getInsights = createServerFn({ method: 'GET' })
+  .validator((topicId: number) => topicId)
+  .handler(async ({ data }) => backend<Insights>(`/api/topics/${data}/insights`))
 
 export const getRun = createServerFn({ method: 'GET' })
   .validator((runId: string) => runId)

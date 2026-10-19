@@ -38,6 +38,7 @@ Collection and AI analysis are separate actions. You can explore collected data 
 - **Topic-based monitoring:** Create named searches with a query, language, lookback window, and maximum number of posts.
 - **Apify-powered collection:** Run the configured X scraper and track each collection run's status and results.
 - **Conversation dashboard:** Explore post volume, engagement, authors, hashtags, timeline, and sentiment distribution.
+- **Regional and network insights:** Compare provinces and cities, inspect observed thread counts, and explore account interactions and communities.
 - **On-demand AI intelligence:** Generate a structured Gemini brief with an overall summary, positive and negative highlights, and key topics.
 - **Persistent storage:** Store topics, posts, collection runs, and analysis state in local SQLite or hosted PostgreSQL.
 - **CSV export:** Download posts for a topic and continue analysis in a spreadsheet or other tool.
@@ -207,6 +208,20 @@ Choose **Create Topic** and provide:
 3. Review the post feed and dashboard metrics. Re-run collection later to add newer posts; duplicate post IDs are not inserted again.
 4. Use **Export CSV** to download posts for that topic.
 
+### Inspect regional activity and account interactions
+
+**Regional Distribution** ranks provinces by collected post count. Select a province to inspect posts, unique authors, observed threads, engagement, sentiment, and leading cities. **Author Location** uses the post's named place when available, then the author's public profile location. **Mentioned Regions** shows places named in the post text. A place mentioned in a post does not establish where the author lives.
+
+The coverage figures show how much of the sample can be located. Unrecognized locations remain unknown. Profiles naming several provinces remain unknown; profiles naming several cities within one province resolve only to that province. Profile coordinates use the nearest gazetteer city as an estimate, not an administrative boundary lookup. Original post coordinates and place geometry are preserved in the export; coordinates alone do not establish a province in this version.
+
+Observed threads are distinct `conversation_id` values supplied by the scraper. Multiple posts in the same thread count once per province. The same thread can appear in several provinces. Missing thread IDs are not invented, and search results do not automatically include every reply in a conversation.
+
+Regional totals use all stored topic posts. Network analysis uses up to 3,000 latest posts, with a notice when the sample is limited. The network represents visible replies, mentions, quotes, and reposts between accounts, not a follower network. Collection still uses the topic's search filters and excludes native reposts by default; existing queries that exclude reposts continue to do so.
+
+**Export CSV** includes all stored topic posts, original profile location, named place and country, resolved region and source, author ID, conversation ID, reply target IDs, quoted and reposted post IDs, mentions with account IDs when supplied, hashtags, engagement, collection time, original coordinates, place geometry, and the complete `raw_json` returned by the scraper. Keep ID columns as text when importing into spreadsheets to preserve long X IDs. Cells beginning with spreadsheet formula prefixes receive an apostrophe; `raw_json` preserves the original values. Empty exports retain the same headers.
+
+On startup, the API adds the metadata columns and derives them from stored `raw_json`. Older posts can gain these fields without another paid collection. Fields absent from the original response remain empty.
+
 ### Generate an AI brief
 
 Select **AI Analysis** after posts have been collected. The result includes an overall summary, positive and negative highlights, and key topics. New analyses are written in English; source posts retain their original language.
@@ -243,6 +258,7 @@ The local Python service exposes the following routes used by the dashboard:
 | `GET` | `/api/topics` | List active topics. |
 | `GET` | `/api/topics/archived` | List archived topics. |
 | `GET` | `/api/topics/{id}/dashboard` | Return a topic's metrics, posts, and analysis state. |
+| `GET` | `/api/topics/{id}/insights` | Return regional coverage, observed threads, and account network analysis. |
 | `GET` | `/api/runs/{id}` | Check upstream collection status and import completed results. |
 | `GET` | `/api/topics/{id}/export.csv` | Export posts for a topic. |
 | `POST` | `/api/topics` | Create a topic. |
